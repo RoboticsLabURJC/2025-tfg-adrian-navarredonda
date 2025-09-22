@@ -7,7 +7,7 @@ categories: jekyll update
 
 # Introduccion
 
-El primer paso en este TFG, tras la instalacion del simulador Carla, es la creacion de circuitos siguientdo las reglas de [Formula student Germany](!https://www.formulastudent.de/fsg/rules), en las reglas podremos apreciar que hay 3 tipos distintos de circuitos, *skidpad*, *trackdrive*, *acceleration*. Estos circuitos seran creados usando conos, por lo que para facilitar la colocacion de estos he creado un **Blueprint** en Carla que coloca los conos automaticamente.
+El primer paso en este TFG, tras la instalacion del simulador Carla, es la creacion de circuitos siguientdo las reglas de [Formula student Germany](https://www.formulastudent.de/fsg/rules), en las reglas podremos apreciar que hay 3 tipos distintos de circuitos, *skidpad*, *trackdrive*, *acceleration*. Estos circuitos seran creados usando conos, por lo que para facilitar la colocacion de estos he creado un **Blueprint** en Carla que coloca los conos automaticamente.
 
 # Explicacion Blueprint
 
@@ -27,7 +27,7 @@ En la primera parte de la funcion se siguen los siguientes pasos:
     * Si `Puntos DT` es válido (True): Significa que hay un CSV cargado. El blueprint establece la variable Spline A Usar para que sea Spline Csv 2 (el spline generado a partir del archivo).
     * Si `Puntos DT` no es válido (False): No hay un CSV. El blueprint usa un trazado por defecto, estableciendo Spline A Usar para que sea Path Spline (un spline dibujado manualmente en el editor).
 
-![funcion col conos1](/assets/images/funcion_col_conos1.jpeg)
+![funcion col conos1]({{ "/assets/images/funcion_col_conos1.jpeg" | relative_url }})
 
 Tras esto, la segunda parte de la funcion sigue los siguientes pasos:
 
@@ -50,7 +50,7 @@ Tras esto, la segunda parte de la funcion sigue los siguientes pasos:
 
 6. Repetir el mismo proceso con los conos del otro lado.
 
-![funcion col conos2](/assets/images/funcion_col_conos2.jpeg)
+![funcion col conos2]({{ "/assets/images/funcion_col_conos2.jpeg" | relative_url }})
 
 ## Funcion para pasar de un CSV a un spline
 
@@ -71,7 +71,7 @@ En el primer paso. El objetivo es leer los datos del archivo CSV y organizar las
     * Si el color es "yellow", añade la Location (posición) de ese cono al array Posiciones Amarillas.
     * Si el color es "blue", añade la Location al array Posiciones Azules.
 
-![function csv 1](/assets/images/function_csv1.jpeg)
+![function csv 1]({{ "/assets/images/function_csv1.jpeg" | relative_url }})
 
 En el segundo paso. Se usan las listas de conos creadas en el paso anterior para construir el trazado central del circuito.
 
@@ -88,7 +88,7 @@ En el segundo paso. Se usan las listas de conos creadas en el paso anterior para
 3. Construir el Spline:
     * Se usa Add Spline Point para añadir el punto medio que acaba de calcular como un nuevo punto en el Spline Csv 2.
 
-![function csv 2](/assets/images/function_csv2.jpeg)
+![function csv 2]({{ "/assets/images/function_csv2.jpeg" | relative_url }})
 
 En el paso final. Se asegura de que el circuito sea un bucle cerrado.
 
@@ -99,9 +99,9 @@ En el paso final. Se asegura de que el circuito sea un bucle cerrado.
     * Llama a Add Spline Point una última vez para añadir un nuevo punto al final del spline. La posición de este nuevo punto
         es la misma que la del punto de inicio.
 
-![function csv 3](/assets/images/function_csv3.jpeg)
+![function csv 3]({{ "/assets/images/function_csv3.jpeg" | relative_url }})
 
 
 # Importar el vehiculo a Carla
 
-Finalmente el ultimo paso para preparar los escenarios de nuestra simulacion es tener el vehiculo que vamos a usar dentro del simulador. Para ello yo he seguido esta [guia](!https://urjc-deepracer.github.io/docs/importdeepracercarla/)
+Finalmente el ultimo paso para preparar los escenarios de nuestra simulacion es tener el vehiculo que vamos a usar dentro del simulador. Para ello yo he seguido esta [guia](https://urjc-deepracer.github.io/docs/importdeepracercarla/)
