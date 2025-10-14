@@ -11,4 +11,6 @@ El objetivo fundamental es **diseñar e implementar un sistema de control basado
 
 Como paso intermedio y plataforma de validación inicial, **la red neuronal se implementará y probará primero en un kart de competición modificado**. Esto nos permitirá depurar el sistema en un entorno controlado antes de dar el salto final al monoplaza de Formula Student.
 
+Para poder realizar la implementacion en el kart de competicion, primero se hara un entrenamiento de la red en el simulador Carla.
+
 A lo largo de este blog, documentaré el proceso de diseño, implementación y prueba del sistema.
