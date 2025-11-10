@@ -16,7 +16,7 @@ conn, addr = s.accept()
 print(f"Connected from {addr}")
 
 # Carla config
-WIDTH, HEIGHT = 800, 600
+WIDTH, HEIGHT = 1000, 800
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("DeepRacer - Remote control")
@@ -24,7 +24,7 @@ pygame.display.set_caption("DeepRacer - Remote control")
 client = carla.Client('127.0.0.1', 2000)
 client.set_timeout(5.0)
 
-client.load_world("Track3")
+client.load_world("Track5")
 world = client.get_world()
 
 weather = carla.WeatherParameters(
@@ -54,7 +54,9 @@ camera_bp = blueprint_library.find('sensor.camera.rgb')
 camera_bp.set_attribute('image_size_x', str(WIDTH))
 camera_bp.set_attribute('image_size_y', str(HEIGHT))
 camera_bp.set_attribute('fov', '90')
-camera_transform = carla.Transform(carla.Location(x=-1, z=0.5))
+#camera_transform = carla.Transform(carla.Location(x=-1, y=-0.5, z=1))
+camera_transform = carla.Transform(carla.Location(x=0, y=-2.5, z=1), carla.Rotation(yaw=90))
+
 camera = world.spawn_actor(camera_bp, camera_transform, attach_to=vehicle)
 
 camera_image = None
