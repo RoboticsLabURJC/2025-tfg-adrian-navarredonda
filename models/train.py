@@ -9,7 +9,6 @@ model.train(
     imgsz=640,
     batch=16,
     device=0,
-    evolve=True
 )
 
 model.export(format="onnx")
