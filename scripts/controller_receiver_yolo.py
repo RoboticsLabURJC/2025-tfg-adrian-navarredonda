@@ -3,13 +3,15 @@ import time
 import pygame
 import numpy as np
 import socket
+import cv2
 from ultralytics import YOLO
 
-MODEL_PATH = "../models/Yolov5.onnx"
-model = YOLO(MODEL_PATH, task='detect')  # carga tu modelo ONNX
+MODEL_PATH = "../models/runs/detect/yolov11_cones3/weights/best.pt"
+
+#MODEL_PATH = "../models/Yolov5.onnx"
+model = YOLO(MODEL_PATH)  # carga tu modelo ONNX
 
 CLASSES = ["blue_cone", "large_orange_cone", 'orange_cone', 'unknown_cone', 'yellow_cone']
-
 
 # Socket config
 HOST = 'localhost'
@@ -61,8 +63,8 @@ camera_bp = blueprint_library.find('sensor.camera.rgb')
 camera_bp.set_attribute('image_size_x', str(WIDTH))
 camera_bp.set_attribute('image_size_y', str(HEIGHT))
 camera_bp.set_attribute('fov', '90')
-#camera_transform = carla.Transform(carla.Location(x=-1, y=-0.5, z=1))
-camera_transform = carla.Transform(carla.Location(x=0, y=-2.5, z=1), carla.Rotation(yaw=90))
+camera_transform = carla.Transform(carla.Location(x=-1, y=-0.5, z=1))
+#camera_transform = carla.Transform(carla.Location(x=0, y=-2.5, z=1), carla.Rotation(yaw=90))
 
 camera = world.spawn_actor(camera_bp, camera_transform, attach_to=vehicle)
 
@@ -71,14 +73,19 @@ def process_image(image):
     global camera_image
     array = np.frombuffer(image.raw_data, dtype=np.uint8)
     array = np.reshape(array, (image.height, image.width, 4))[:, :, :3]
-    frame = array[:, :, ::-1].copy()
+    bgr = array[:, :, :3].copy()
 
-    results = model(frame)
+    results = model(bgr)
 
     annotated_frame = results[0].plot()
 
+    # Asegúrate de que sea uint8
+    if annotated_frame.dtype != np.uint8:
+        annotated_frame = (annotated_frame * 255).astype(np.uint8)
 
-    camera_image = pygame.surfarray.make_surface(annotated_frame.swapaxes(0, 1))
+    rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+
+    camera_image = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
 camera.listen(process_image)
 
 # Control vars
