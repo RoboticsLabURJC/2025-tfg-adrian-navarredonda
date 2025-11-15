@@ -39,8 +39,7 @@ def objective(trial):
     )
 
     # ----- Métrica objetivo: mAP50-95 -----
-    map5095 = results.metrics.mAP50_95
-
+    _, _, _, map5095 = results.mean_results()
     return map5095
 
 
@@ -49,11 +48,11 @@ if __name__ == "__main__":
     study.optimize(objective, n_trials=40)
 
     # Guardar hiperparámetros en un archivo
-    with open("best_hyperparameters.json", "w") as f:
+    with open("best_hyperparameters.json", "x") as f:
         json.dump(study.best_params, f, indent=4)
 
     # Guardar métricas si quieres
-    with open("best_map.txt", "w") as f:
+    with open("best_map.txt", "x") as f:
         f.write(f"Best mAP50-95: {study.best_value}")
 
     print("Best hyperparameters:", study.best_params)
