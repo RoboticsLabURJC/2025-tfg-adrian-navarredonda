@@ -1,42 +1,48 @@
-import pandas as pd
-import matplotlib.pyplot as plt
+import time
+import csv
+from ultralytics import YOLO
+import glob
+import os
 
-# Cargar CSV
-df = pd.read_csv("inference_times.csv")
+# -------------------------------
+# CONFIGURACIÓN
+# -------------------------------
+MODEL_PATH = "../../models/runs/detect/Run_con_parametros/weights/best.pt"        # Pon aquí tu modelo YOLOv11
+IMAGES_FOLDER = "/home/adrian/Descargas/data.v4i.yolov11/train/images/"         # Carpeta con imágenes de prueba
+CSV_OUTPUT = "tiempos_inferencia.csv"      # Archivo CSV de salida
+N_RUNS = 1                                  # Número de veces que quieres repetir cada inferencia
 
-# Ignorar primer frame si es un outlier extremo
-df_plot = df[df["frame_id"] != 1]
+# -------------------------------
+# CARGA DEL MODELO
+# -------------------------------
+model = YOLO(MODEL_PATH)
 
-# Suavizado con media móvil
-window_size = 10
-df_plot["smoothed"] = df_plot["inference_time_ms"].rolling(window=window_size, min_periods=1).mean()
+# Obtener imágenes
+image_paths = glob.glob(os.path.join(IMAGES_FOLDER, "*.*"))
 
-# Crear figura
-plt.figure(figsize=(12, 6))
+if not image_paths:
+    raise ValueError("❌ No se encontraron imágenes en la carpeta especificada.")
 
-# Línea original (opcional, muy fina)
-plt.plot(df_plot["frame_id"], df_plot["inference_time_ms"], color="lightblue", linewidth=0.8, alpha=0.5, label="Medida original")
+# -------------------------------
+# CREAR CSV
+# -------------------------------
+with open(CSV_OUTPUT, mode="w", newline="") as file:
+    writer = csv.writer(file)
+    writer.writerow(["imagen", "tiempo_inferencia_ms"])
 
-# Línea suavizada
-plt.plot(df_plot["frame_id"], df_plot["smoothed"], color="blue", linewidth=2, label=f"Media suavizada ({window_size} frames)")
+    # Procesar cada imagen
+    for img_path in image_paths:
+        for _ in range(N_RUNS):
+            inicio = time.time()
+            _ = model(img_path)  # inferencia
+            fin = time.time()
 
-# Etiquetas y título
-plt.xlabel("Frame ID", fontsize=12)
-plt.ylabel("Tiempo de inferencia (ms)", fontsize=12)
-plt.title("Evolución del tiempo de inferencia por frame (suavizado)", fontsize=14)
+            tiempo_ms = (fin - inicio) * 1000  # pasar a milisegundos
 
-# Leyenda
-plt.legend()
+            writer.writerow([os.path.basename(img_path), tiempo_ms])
+            print(f"{os.path.basename(img_path)}: {tiempo_ms:.2f} ms")
 
-# Cuadrícula
-plt.grid(True, alpha=0.3)
-
-# Limitar eje Y para eliminar outliers
-max_y = 45
-plt.ylim(0, max_y * 1.1)
-
-plt.tight_layout()
-plt.show()
+print(f"\n📁 Resultados guardados en: {CSV_OUTPUT}")
 
 
 
