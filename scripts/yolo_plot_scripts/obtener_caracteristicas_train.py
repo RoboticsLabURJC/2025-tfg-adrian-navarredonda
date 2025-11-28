@@ -8,9 +8,9 @@ import os
 # CONFIGURACIÓN
 # -------------------------------
 MODEL_PATH = "../../models/runs/detect/Run_con_parametros/weights/best.pt"
-IMAGES_FOLDER = "/home/adrian/Descargas/data.v4i.yolov11/train/images/"
-CSV_OUTPUT = "caracteristicas_train.csv"
-N_RUNS = 1  # Número de veces que quieres repetir cada inferencia
+# IMAGES_FOLDER = "/home/adrian/Descargas/data.v4i.yolov11/train/images/" # portatil
+IMAGES_FOLDER = "../../models/data.v4i.yolov11/train/images"
+CSV_OUTPUT = "caracteristicas_train_servidor.csv"
 
 # Cargar modelo
 model = YOLO(MODEL_PATH)
