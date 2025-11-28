@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Cargar CSV con datos
-df = pd.read_csv("caracteristicas_train_portatil.csv")
+df = pd.read_csv("caracteristicas_train_servidor.csv")
 
 # Calcualr area del bounding box
 df["area"] = (df["x2"] - df["x1"]) * (df["y2"] - df["y1"])
