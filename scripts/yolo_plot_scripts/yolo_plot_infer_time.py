@@ -1,8 +1,9 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
 # Cargar CSV
-df = pd.read_csv("caracteristicas_train_portatil.csv")
+df = pd.read_csv("caracteristicas_train_servidor.csv")
 df['tiempo_inferencia_ms'] = df['tiempo_inferencia_ms'].astype(float)
 
 # Filtrar valores <= 100 ms
@@ -30,4 +31,7 @@ plt.ylabel("Tiempo de inferencia (ms)")
 plt.title(f"Tiempo de inferencia suavizado (media movil de {window_size} medidas)")
 plt.grid(True)
 plt.legend()
+
+# Forzar ticks cada 1 ms en Y
+plt.gca().yaxis.set_major_locator(MultipleLocator(1))
 plt.show()
