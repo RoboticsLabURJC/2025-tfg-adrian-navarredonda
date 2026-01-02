@@ -8,12 +8,13 @@ import os
 # CONFIGURACIÓN
 # -------------------------------
 MODEL_PATH = "../../models/runs/detect/Run_con_parametros/weights/best.pt"
-# IMAGES_FOLDER = "/home/adrian/Descargas/data.v4i.yolov11/train/images/" # portatil
-IMAGES_FOLDER = "../../models/data.v4i.yolov11/train/images"
-CSV_OUTPUT = "caracteristicas_train_servidor.csv"
+IMAGES_FOLDER = "/home/adrian/Descargas/data.v4i.yolov11/train/images/" # portatil
+# IMAGES_FOLDER = "../../models/data.v4i.yolov11/train/images"
+CSV_OUTPUT = "caracteristicas_train_portatil_prueba.csv"
 
 # Cargar modelo
 model = YOLO(MODEL_PATH)
+model.to("cuda")
 
 # Obtener imágenes
 image_paths = glob.glob(os.path.join(IMAGES_FOLDER, "*.*"))

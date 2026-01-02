@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
 # Cargar CSV
-df = pd.read_csv("caracteristicas_train_servidor.csv")
+df = pd.read_csv("caracteristicas_train_portatil.csv")
 df['tiempo_inferencia_ms'] = df['tiempo_inferencia_ms'].astype(float)
 
 # Filtrar valores <= 100 ms
