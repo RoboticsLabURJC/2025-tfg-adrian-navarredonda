@@ -12,7 +12,7 @@ import os
 MODEL_PATH = "../../models/runs/detect/Run_con_parametros/weights/best.pt"
 model = YOLO(MODEL_PATH)
 
-CLASSES = ["blue_cone", "large_orange_cone", 'orange_cone', 'unknown_cone', 'yellow_cone']
+CLASSES = ["blue_cone", "large_orange_cone", "orange_cone", "unknown_cone", "yellow_cone"]
 
 # ================= CSV =================
 csv_path = "../yolo_plot_scripts/confidences.csv"
@@ -31,11 +31,13 @@ if write_time_header:
 
 # ================= CARLA =================
 WIDTH, HEIGHT = 1000, 800
+LANE_WIDTH_PX = 180
+
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("CARLA - YOLO + PID Lane Following")
+pygame.display.set_caption("CARLA - YOLO + Robust Lane Following")
 
-client = carla.Client('127.0.0.1', 2000)
+client = carla.Client("127.0.0.1", 2000)
 client.set_timeout(5.0)
 client.load_world("Track5")
 world = client.get_world()
@@ -46,21 +48,21 @@ world.set_weather(carla.WeatherParameters(
 ))
 
 bp_lib = world.get_blueprint_library()
-vehicle_bp = bp_lib.find('vehicle.kart.kart')
+vehicle_bp = bp_lib.find("vehicle.kart.kart")
 
 spawn = carla.Transform(
-    carla.Location(x=-7, y=-15, z=0.5),
-    carla.Rotation(yaw=-15)
+    carla.Location(x=6, y=0, z=0.5),
+    carla.Rotation(yaw=0)
 )
 
 vehicle = world.try_spawn_actor(vehicle_bp, spawn)
 if not vehicle:
     raise RuntimeError("Vehicle not spawned")
 
-camera_bp = bp_lib.find('sensor.camera.rgb')
-camera_bp.set_attribute('image_size_x', str(WIDTH))
-camera_bp.set_attribute('image_size_y', str(HEIGHT))
-camera_bp.set_attribute('fov', '90')
+camera_bp = bp_lib.find("sensor.camera.rgb")
+camera_bp.set_attribute("image_size_x", str(WIDTH))
+camera_bp.set_attribute("image_size_y", str(HEIGHT))
+camera_bp.set_attribute("fov", "90")
 
 camera = world.spawn_actor(
     camera_bp,
@@ -83,8 +85,7 @@ last_time = time.time()
 
 def process_image(image):
     global camera_image, frame_id
-    global prev_error, integral, last_time
-    global control
+    global prev_error, integral, last_time, control
 
     frame_id += 1
     now = time.time()
@@ -107,6 +108,7 @@ def process_image(image):
         conf = float(box.conf[0])
         if conf < 0.5:
             continue
+
         writer.writerow([frame_id, cls, conf])
 
         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -117,26 +119,62 @@ def process_image(image):
 
         if cls_name == "blue_cone":
             left_cones.append((cx, cy))
-
         elif cls_name == "yellow_cone":
             right_cones.append((cx, cy))
 
     annotated = results[0].plot()
 
+    # ===== SOLO LOS 4 CONOS MÁS CERCANOS =====
+    left_cones = sorted(left_cones, key=lambda p: p[1], reverse=True)[:4]
+    right_cones = sorted(right_cones, key=lambda p: p[1], reverse=True)[:4]
+
     left_cones.sort(key=lambda p: p[1])
     right_cones.sort(key=lambda p: p[1])
 
-    centerline = []
-    for l, r in zip(left_cones, right_cones):
-        centerline.append((
-            int((l[0] + r[0]) / 2),
-            int((l[1] + r[1]) / 2)
-        ))
+    # ===== POLILÍNEAS LATERALES =====
+    for i in range(len(left_cones) - 1):
+        cv2.line(annotated, left_cones[i], left_cones[i + 1], (255, 0, 0), 2)
 
-    if len(centerline) >= 4:
+    for i in range(len(right_cones) - 1):
+        cv2.line(annotated, right_cones[i], right_cones[i + 1], (0, 255, 255), 2)
+
+    # ===== CONSTRUCCIÓN ROBUSTA DEL CENTRO =====
+    centerline = []
+    have_left = len(left_cones) >= 2
+    have_right = len(right_cones) >= 2
+
+    # Ambos lados visibles → promedio normal
+    if have_left and have_right:
+        for l, r in zip(left_cones, right_cones):
+            centerline.append((
+                int((l[0] + r[0]) / 2),
+                int((l[1] + r[1]) / 2)
+            ))
+
+    # Solo lado izquierdo
+    elif have_left and not have_right:
+        for p in left_cones:
+            x, y = p
+            # proyectar hacia la derecha el ancho del carril
+            cx = int(x - LANE_WIDTH_PX)
+            cy = int(y)
+            centerline.append((cx, cy))
+
+    # Solo lado derecho
+    elif have_right and not have_left:
+        for p in right_cones:
+            x, y = p
+            # proyectar hacia la izquierda el ancho del carril
+            cx = int(x + LANE_WIDTH_PX)
+            cy = int(y)
+            centerline.append((cx, cy))
+
+    # ===== SPLINE CENTRAL + CONTROL =====
+    if len(centerline) >= 3:
         pts = np.array(centerline)
-        tck, _ = splprep([pts[:, 0], pts[:, 1]], s=20)
-        u = np.linspace(0, 1, 100)
+        k = min(2, len(centerline) - 1)
+        tck, _ = splprep([pts[:, 0], pts[:, 1]], s=5, k=k)
+        u = np.linspace(0, 1, 50)
         xs, ys = splev(u, tck)
 
         spline = list(zip(xs.astype(int), ys.astype(int)))
@@ -144,8 +182,12 @@ def process_image(image):
         for i in range(len(spline) - 1):
             cv2.line(annotated, spline[i], spline[i + 1], (0, 255, 0), 2)
 
-        lookahead = 30
-        tx, ty = spline[min(lookahead, len(spline) - 1)]
+        TARGET_Y = int(HEIGHT * 0.55)
+        tx, ty = spline[-1]
+        for x, y in spline:
+            if y > TARGET_Y:
+                tx, ty = x, y
+                break
 
         error = tx - WIDTH / 2
         integral += error * dt
