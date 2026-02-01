@@ -55,7 +55,7 @@ camera_bp.set_attribute('image_size_x', str(WIDTH))
 camera_bp.set_attribute('image_size_y', str(HEIGHT))
 camera_bp.set_attribute('fov', '90')
 #camera_transform = carla.Transform(carla.Location(x=-1, y=-0.5, z=1))
-camera_transform = carla.Transform(carla.Location(x=0, y=-2.5, z=1), carla.Rotation(yaw=90))
+camera_transform = carla.Transform(carla.Location(x=1, y=-2.5, z=0.5), carla.Rotation(yaw=90))
 
 camera = world.spawn_actor(camera_bp, camera_transform, attach_to=vehicle)
 
