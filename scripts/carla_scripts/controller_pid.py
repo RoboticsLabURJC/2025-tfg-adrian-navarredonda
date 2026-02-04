@@ -39,7 +39,7 @@ pygame.display.set_caption("CARLA - YOLO + Robust Lane Following")
 
 client = carla.Client("127.0.0.1", 2000)
 client.set_timeout(5.0)
-client.load_world("Track5")
+client.load_world("Track3")
 world = client.get_world()
 
 world.set_weather(carla.WeatherParameters(
@@ -51,7 +51,7 @@ bp_lib = world.get_blueprint_library()
 vehicle_bp = bp_lib.find("vehicle.kart.kart")
 
 spawn = carla.Transform(
-    carla.Location(x=6, y=0, z=0.5),
+    carla.Location(x=5.5, y=0.27, z=0.5),
     carla.Rotation(yaw=0)
 )
 
@@ -66,7 +66,7 @@ camera_bp.set_attribute("fov", "90")
 
 camera = world.spawn_actor(
     camera_bp,
-    carla.Transform(carla.Location(x=-1, y=-0.5, z=1)),
+    carla.Transform(carla.Location(x=0, y=-0.65, z=1)),
     attach_to=vehicle
 )
 
@@ -76,7 +76,7 @@ prev_error = 0.0
 integral = 0.0
 
 control = carla.VehicleControl()
-control.throttle = 0.3
+control.throttle = 0.5
 control.brake = 0.0
 
 camera_image = None
@@ -122,7 +122,7 @@ def process_image(image):
         elif cls_name == "yellow_cone":
             right_cones.append((cx, cy))
 
-    annotated = results[0].plot()
+    annotated = results[0].plot(labels=False, conf=False)
 
     # ===== SOLO LOS 4 CONOS MÁS CERCANOS =====
     left_cones = sorted(left_cones, key=lambda p: p[1], reverse=True)[:4]
@@ -182,7 +182,7 @@ def process_image(image):
         for i in range(len(spline) - 1):
             cv2.line(annotated, spline[i], spline[i + 1], (0, 255, 0), 2)
 
-        TARGET_Y = int(HEIGHT * 0.55)
+        TARGET_Y = int(HEIGHT * 0.6)
         tx, ty = spline[-1]
         for x, y in spline:
             if y > TARGET_Y:
