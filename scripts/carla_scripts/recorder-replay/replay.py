@@ -179,6 +179,20 @@ def replay_loop(args, view="car"):
                 mask_c = np.zeros(mask_w.shape, np.uint8); mask_c[mask_w>0]=1; mask_c[mask_y>0]=2
                 mask_rgb = np.zeros_like(rgb); mask_rgb[mask_c==1]=[255,255,255]; mask_rgb[mask_c==2]=[255,255,0]
 
+                mask_blue = cv2.inRange(hsv, np.array([90, 100, 100]), np.array([130, 255, 255]))
+                mask_yellow = mask_y  # reutilizamos
+                mask_orange = cv2.inRange(hsv, np.array([5, 100, 100]), np.array([18, 255, 255]))
+
+                mask_cones = np.zeros(mask_blue.shape, np.uint8)
+                mask_cones[mask_blue > 0] = 1
+                mask_cones[mask_yellow > 0] = 2
+                mask_cones[mask_orange > 0] = 3
+
+                mask_cones_rgb = np.zeros_like(rgb)
+                mask_cones_rgb[mask_cones == 1] = [0, 0, 255]     # azul
+                mask_cones_rgb[mask_cones == 2] = [255, 255, 0]   # amarillo
+                mask_cones_rgb[mask_cones == 3] = [255, 165, 0]   # naranja
+
                 # You can get the controls of the vehicule at each snapshot
                 # ctrl = vehicle.get_control()
                 # print(ctrl.throttle, ctrl.steer, ctrl.brake)
@@ -190,7 +204,7 @@ def replay_loop(args, view="car"):
                 brake    = float(ctrl.brake)
                 speed = 0.0
 
-                dataset.save_sample(rel_time, bgr, mask_rgb, throttle, steer, brake, speed)
+                dataset.save_sample(rel_time, bgr, mask_rgb, mask_cones_rgb, throttle, steer, brake, speed)
 
 
     except KeyboardInterrupt:

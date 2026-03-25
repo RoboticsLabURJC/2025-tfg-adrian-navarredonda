@@ -39,6 +39,9 @@ class DatasetSaver:
 
         self.rgb_foldername = "rgb"
         self.mask_foldername = "mask"
+        self.mask2_foldername = "mask_fs"
+
+        self.mask2_path = os.path.join(self.dataset_path, self.mask2_foldername)
 
         self.rgb_path = os.path.join(self.dataset_path, self.rgb_foldername)
         self.mask_path = os.path.join(self.dataset_path, self.mask_foldername)
@@ -48,30 +51,34 @@ class DatasetSaver:
 
         os.makedirs(self.rgb_path, exist_ok=True)
         os.makedirs(self.mask_path, exist_ok=True)
+        os.makedirs(self.mask2_path, exist_ok=True)
 
         print (f"DatasetSaver loaded for {self.dataset_path}")
 
         if not os.path.exists(self.csv_filename):
             os.makedirs(os.path.dirname(self.csv_filename), exist_ok=True)
             with open(self.csv_filename, "w", newline="") as f:
-                csv.writer(f).writerow(["rgb_path","mask_path","timestamp",
-                                        "throttle","steer","brake","speed"])
+                csv.writer(f).writerow(["rgb_path","mask_path","mask_fs_path","timestamp","throttle","steer","brake","speed"])
 
-    def save_sample (self, timestamp, bgr, mask_rgb, throttle, steer, brake, speed):
+    def save_sample (self, timestamp, bgr, mask_rgb, mask_cones_rgb, throttle, steer, brake, speed):
         
         rgb_filename  = f"rgb_{self.counter:08d}.png"
         mask_filename = f"mask_{self.counter:08d}.png"
+        mask2_filename = f"mask_fs_{self.counter:08d}.png"
         
         self.counter = self.counter + 1
 
         cv2.imwrite(os.path.join(self.rgb_path,  rgb_filename),  bgr)
         cv2.imwrite(os.path.join(self.mask_path, mask_filename),
                     cv2.cvtColor(mask_rgb, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(os.path.join(self.mask2_path, mask2_filename),
+                    cv2.cvtColor(mask_cones_rgb, cv2.COLOR_RGB2BGR))
 
         with open(self.csv_filename, "a", newline="") as f:
             csv.writer(f).writerow([
                 f"/{self.rgb_foldername}/{rgb_filename}",
                 f"/{self.mask_foldername}/{mask_filename}",
+                f"/{self.mask2_foldername}/{mask2_filename}",
                 timestamp, throttle, steer, brake, speed
             ])        
      
