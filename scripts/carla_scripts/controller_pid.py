@@ -7,71 +7,22 @@ from ultralytics import YOLO
 from scipy.interpolate import splprep, splev
 import csv
 import os
+import argparse
+import random
+import sys
 
-# ================= YOLO =================
 MODEL_PATH = "../../models/runs/detect/Run_con_parametros/weights/best.pt"
 model = YOLO(MODEL_PATH)
-
+CSV_FILENAME = "data.csv"
+RATE_CONTROL_LOOP = 30
+VEHICLE_MODEL = "vehicle.kart.kart"
 CLASSES = ["blue_cone", "large_orange_cone", "orange_cone", "unknown_cone", "yellow_cone"]
-
-# ================= CSV =================
-csv_path = "../yolo_plot_scripts/confidences.csv"
-write_header = not os.path.exists(csv_path)
-f = open(csv_path, "a", newline="")
-writer = csv.writer(f)
-if write_header:
-    writer.writerow(["frame_id", "class", "confidence"])
-
-csv_time_path = "../yolo_plot_scripts/inference_times.csv"
-write_time_header = not os.path.exists(csv_time_path)
-f_time = open(csv_time_path, "a", newline="")
-writer_time = csv.writer(f_time)
-if write_time_header:
-    writer_time.writerow(["frame_id", "inference_time_ms"])
-
 # ================= CARLA =================
 WIDTH, HEIGHT = 1000, 800
 LANE_WIDTH_PX = 180
 
-pygame.init()
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("CARLA - YOLO + Robust Lane Following")
 
-client = carla.Client("127.0.0.1", 2000)
-client.set_timeout(5.0)
-client.load_world("Track3")
-world = client.get_world()
-
-world.set_weather(carla.WeatherParameters(
-    cloudiness=80.0,
-    sun_altitude_angle=90.0
-))
-
-bp_lib = world.get_blueprint_library()
-vehicle_bp = bp_lib.find("vehicle.kart.kart")
-
-spawn = carla.Transform(
-    carla.Location(x=5.5, y=0.27, z=0.5),
-    carla.Rotation(yaw=0)
-)
-
-vehicle = world.try_spawn_actor(vehicle_bp, spawn)
-if not vehicle:
-    raise RuntimeError("Vehicle not spawned")
-
-camera_bp = bp_lib.find("sensor.camera.rgb")
-camera_bp.set_attribute("image_size_x", str(WIDTH))
-camera_bp.set_attribute("image_size_y", str(HEIGHT))
-camera_bp.set_attribute("fov", "90")
-
-camera = world.spawn_actor(
-    camera_bp,
-    carla.Transform(carla.Location(x=0, y=-0.65, z=1)),
-    attach_to=vehicle
-)
-
-# ================= PID =================
-kp, ki, kd = 0.005, 0.0001, 0.001
+kp, ki, kd = 0.004, 0.0001, 0.001
 prev_error = 0.0
 integral = 0.0
 
@@ -83,148 +34,266 @@ camera_image = None
 frame_id = 0
 last_time = time.time()
 
-def process_image(image):
-    global camera_image, frame_id
-    global prev_error, integral, last_time, control
+def game_loop(args):
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("CARLA - YOLO + Robust Lane Following")
 
-    frame_id += 1
-    now = time.time()
-    dt = now - last_time
-    last_time = now
+    client = carla.Client('localhost', args.port)
+    client.set_timeout(10.0)
+    world = client.load_world(args.town)
 
-    img = np.frombuffer(image.raw_data, dtype=np.uint8)
-    img = img.reshape((image.height, image.width, 4))[:, :, :3]
+    world.set_weather(carla.WeatherParameters(
+        cloudiness=80.0,
+        sun_altitude_angle=90.0
+    ))
 
-    start = time.time()
-    results = model(img)
-    infer_ms = (time.time() - start) * 1000.0
-    writer_time.writerow([frame_id, infer_ms])
+    log_path = args.log_path + "/" + str(int(time.time())) + "_" + args.town + "/"
+    os.makedirs(log_path, exist_ok=True)
 
-    left_cones = []
-    right_cones = []
+    # Speed CSV settings    
+    csv_file_path = log_path + CSV_FILENAME
+    csv_fh = open(csv_file_path, "w", newline="")
+    csv_writer = csv.writer(csv_fh)
+    csv_writer.writerow(["sim_time", "speed_m_s"])
 
-    for box in results[0].boxes:
-        cls = int(box.cls[0])
-        conf = float(box.conf[0])
-        if conf < 0.5:
-            continue
+    bp_lib = world.get_blueprint_library()
 
-        writer.writerow([frame_id, cls, conf])
+    #select vehicle
+    vehicle_bp = bp_lib.find(VEHICLE_MODEL)
 
-        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-        cx = int((x1 + x2) / 2)
-        cy = int((y1 + y2) / 2)
+    #Escoger un punto de spawn aleatoriamente
+    spawn_points = world.get_map().get_spawn_points()
+    spawn_point = random.choice(spawn_points) 
+    vehicle = world.spawn_actor(vehicle_bp, spawn_point)
 
-        cls_name = CLASSES[cls]
+    if not vehicle:
+        raise RuntimeError("Vehicle not spawned")
+    
+    # Traffic manager
+    try:
+        tm = client.get_trafficmanager(args.tport)
+    except RuntimeError:
+        args.tport += 2
+        tm = client.get_trafficmanager(args.tport)
 
-        if cls_name == "blue_cone":
-            left_cones.append((cx, cy))
-        elif cls_name == "yellow_cone":
-            right_cones.append((cx, cy))
+    print("TM port:", tm.get_port())
+    tm = client.get_trafficmanager(args.tport)
+    tm_port = tm.get_port()  
+    
+    # Start the log and recording
+    # Important! Make sure you start the recording after spawn all your actors
+    log_filename = log_path + args.town + ".log"
+    print(log_filename)
+    client.start_recorder(log_filename, True)
 
-    annotated = results[0].plot(labels=False, conf=False)
+    camera_bp = bp_lib.find("sensor.camera.rgb")
+    camera_bp.set_attribute("image_size_x", str(WIDTH))
+    camera_bp.set_attribute("image_size_y", str(HEIGHT))
+    camera_bp.set_attribute("fov", "90")
 
-    # ===== SOLO LOS 4 CONOS MÁS CERCANOS =====
-    left_cones = sorted(left_cones, key=lambda p: p[1], reverse=True)[:4]
-    right_cones = sorted(right_cones, key=lambda p: p[1], reverse=True)[:4]
+    camera = world.spawn_actor(
+        camera_bp,
+        carla.Transform(carla.Location(x=0, y=-0.65, z=1)),
+        attach_to=vehicle
+    )
 
-    left_cones.sort(key=lambda p: p[1])
-    right_cones.sort(key=lambda p: p[1])
+    # ================= PID =================
 
-    # ===== POLILÍNEAS LATERALES =====
-    for i in range(len(left_cones) - 1):
-        cv2.line(annotated, left_cones[i], left_cones[i + 1], (255, 0, 0), 2)
+    def process_image(image):
+        global camera_image, frame_id
+        global prev_error, integral, last_time, control
 
-    for i in range(len(right_cones) - 1):
-        cv2.line(annotated, right_cones[i], right_cones[i + 1], (0, 255, 255), 2)
+        frame_id += 1
+        now = time.time()
+        dt = now - last_time
+        last_time = now
 
-    # ===== CONSTRUCCIÓN ROBUSTA DEL CENTRO =====
-    centerline = []
-    have_left = len(left_cones) >= 2
-    have_right = len(right_cones) >= 2
+        img = np.frombuffer(image.raw_data, dtype=np.uint8)
+        img = img.reshape((image.height, image.width, 4))[:, :, :3]
 
-    # Ambos lados visibles → promedio normal
-    if have_left and have_right:
-        for l, r in zip(left_cones, right_cones):
-            centerline.append((
-                int((l[0] + r[0]) / 2),
-                int((l[1] + r[1]) / 2)
-            ))
+        start = time.time()
+        results = model(img)
+        infer_ms = (time.time() - start) * 1000.0
+        #writer_time.writerow([frame_id, infer_ms])
 
-    # Solo lado izquierdo
-    elif have_left and not have_right:
-        for p in left_cones:
-            x, y = p
-            # proyectar hacia la derecha el ancho del carril
-            cx = int(x - LANE_WIDTH_PX)
-            cy = int(y)
-            centerline.append((cx, cy))
+        left_cones = []
+        right_cones = []
 
-    # Solo lado derecho
-    elif have_right and not have_left:
-        for p in right_cones:
-            x, y = p
-            # proyectar hacia la izquierda el ancho del carril
-            cx = int(x + LANE_WIDTH_PX)
-            cy = int(y)
-            centerline.append((cx, cy))
+        for box in results[0].boxes:
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            if conf < 0.5:
+                continue
 
-    # ===== SPLINE CENTRAL + CONTROL =====
-    if len(centerline) >= 3:
-        pts = np.array(centerline)
-        k = min(2, len(centerline) - 1)
-        tck, _ = splprep([pts[:, 0], pts[:, 1]], s=5, k=k)
-        u = np.linspace(0, 1, 50)
-        xs, ys = splev(u, tck)
+            #writer.writerow([frame_id, cls, conf])
 
-        spline = list(zip(xs.astype(int), ys.astype(int)))
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+            cx = int((x1 + x2) / 2)
+            cy = int((y1 + y2) / 2)
 
-        for i in range(len(spline) - 1):
-            cv2.line(annotated, spline[i], spline[i + 1], (0, 255, 0), 2)
+            cls_name = CLASSES[cls]
 
-        TARGET_Y = int(HEIGHT * 0.6)
-        tx, ty = spline[-1]
-        for x, y in spline:
-            if y > TARGET_Y:
-                tx, ty = x, y
-                break
+            if cls_name == "blue_cone":
+                left_cones.append((cx, cy))
+            elif cls_name == "yellow_cone":
+                right_cones.append((cx, cy))
 
-        error = tx - WIDTH / 2
-        integral += error * dt
-        derivative = (error - prev_error) / dt if dt > 0 else 0.0
-        prev_error = error
+        annotated = results[0].plot(labels=False, conf=False)
 
-        steer = kp * error + ki * integral + kd * derivative
-        control.steer = float(np.clip(steer, -1.0, 1.0))
+        # ===== SOLO LOS 4 CONOS MÁS CERCANOS =====
+        left_cones = sorted(left_cones, key=lambda p: p[1], reverse=True)[:4]
+        right_cones = sorted(right_cones, key=lambda p: p[1], reverse=True)[:4]
 
-        cv2.circle(annotated, (tx, ty), 6, (0, 0, 255), -1)
+        left_cones.sort(key=lambda p: p[1])
+        right_cones.sort(key=lambda p: p[1])
 
-    vehicle.apply_control(control)
+        # ===== POLILÍNEAS LATERALES =====
+        for i in range(len(left_cones) - 1):
+            cv2.line(annotated, left_cones[i], left_cones[i + 1], (255, 0, 0), 2)
 
-    rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-    camera_image = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
+        for i in range(len(right_cones) - 1):
+            cv2.line(annotated, right_cones[i], right_cones[i + 1], (0, 255, 255), 2)
 
-camera.listen(process_image)
+        # ===== CONSTRUCCIÓN ROBUSTA DEL CENTRO =====
+        centerline = []
+        have_left = len(left_cones) >= 2
+        have_right = len(right_cones) >= 2
+
+        # Ambos lados visibles → promedio normal
+        if have_left and have_right:
+            for l, r in zip(left_cones, right_cones):
+                centerline.append((
+                    int((l[0] + r[0]) / 2),
+                    int((l[1] + r[1]) / 2)
+                ))
+
+        elif not have_left and have_right:
+            for x, y in left_cones:
+                cx = int(x + LANE_WIDTH_PX)
+                cy = int(y)
+                centerline.append((cx, cy))
+
+        elif not have_right and have_left:
+            for x, y in right_cones:
+                cx = int(x - LANE_WIDTH_PX)
+                cy = int(y)
+                centerline.append((cx, cy))
+
+        # ===== SPLINE CENTRAL + CONTROL =====
+        if len(centerline) >= 3:
+            pts = np.array(centerline)
+            k = min(2, len(centerline) - 1)
+            tck, _ = splprep([pts[:, 0], pts[:, 1]], s=5, k=k)
+            u = np.linspace(0, 1, 50)
+            xs, ys = splev(u, tck)
+
+            spline = list(zip(xs.astype(int), ys.astype(int)))
+
+            for i in range(len(spline) - 1):
+                cv2.line(annotated, spline[i], spline[i + 1], (0, 255, 0), 2)
+
+            TARGET_Y = int(HEIGHT * 0.6)
+            tx, ty = spline[-1]
+            for x, y in spline:
+                if y > TARGET_Y:
+                    tx, ty = x, y
+                    break
+
+            error = tx - WIDTH / 2
+            integral += error * dt
+            derivative = (error - prev_error) / dt if dt > 0 else 0.0
+            prev_error = error
+
+            steer = kp * error + ki * integral + kd * derivative
+            control.steer = float(np.clip(steer, -1.0, 1.0))
+
+            cv2.circle(annotated, (tx, ty), 6, (0, 0, 255), -1)
+
+        vehicle.apply_control(control)
+
+        rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+        camera_image = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
+
+    camera.listen(process_image)
+
+    clock = pygame.time.Clock()
+
+    # Measure the execution rate (Hz) in the server
+    def on_tick(snapshot):
+        fps_server = 1.0 / snapshot.timestamp.delta_seconds
+        print(f"Frame {snapshot.frame} | Server ~{fps_server:.1f} Hz  ", end="\r")
+
+    callback_id = world.on_tick(on_tick)
+
+    # Start time at 0 for the speed csv
+    snapshot = world.get_snapshot()               
+    t0 = snapshot.timestamp.elapsed_seconds
 
 # ================= LOOP =================
-running = True
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
+    try:
+        while True:
+            rel_time = world.get_snapshot().timestamp.elapsed_seconds - t0
+            # Get vehicle speed
+            raw_vel = vehicle.get_velocity()
 
-    if camera_image:
-        screen.blit(camera_image, (0, 0))
-    pygame.display.flip()
+            # rate of this control loop
+            clock.tick(RATE_CONTROL_LOOP)
+            
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    raise KeyboardInterrupt
 
-    vel = vehicle.get_velocity()
-    speed = (vel.x**2 + vel.y**2 + vel.z**2)**0.5
-    print(f"Speed {speed:.2f} m/s | Steer {control.steer:.2f}")
+            if camera_image:
+                screen.blit(camera_image, (0, 0))
+            pygame.display.flip()
 
-# ================= CLEANUP =================
-f.close()
-f_time.close()
-camera.destroy()
-vehicle.destroy()
-pygame.quit()
-print("Finished")
+            speed = float(np.linalg.norm([raw_vel.x, raw_vel.y, raw_vel.z]))
+            csv_writer.writerow([f"{rel_time:.6f}", f"{speed:.6f}"])
+            print(f"Speed {speed:.2f} m/s | Steer {control.steer:.2f}")
+    except KeyboardInterrupt:
+        print("Exit...")
+
+    finally:      
+        world.remove_on_tick(callback_id)
+
+        client.stop_recorder()
+        
+        if camera is not None:
+            camera.stop()
+            camera.destroy()
+            
+        if vehicle is not None:
+            vehicle.destroy()
+
+        csv_fh.flush()
+        csv_fh.close()
+
+        pygame.quit()
+        sys.exit()
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description="recorder")
+
+    parser.add_argument("--log_path", type=str, default=os.getcwd() + "/logs/",
+                        help="Directory where log files will be stored")
+    
+    parser.add_argument("--town", "--carla-town", type=str, default="Track3",
+                        help="Name of the CARLA map to load")
+    
+    parser.add_argument("--port", "--carla-port", type=int, default=3010,
+                        help="Port used to connect to the CARLA simulator")
+    
+    parser.add_argument("--tport","--carla-traffic-port", type=int, default=3020,
+                        help="Port used by the CARLA traffic manager")
+    
+    # parser.add_argument("--extra_actor", "--carla-extra-actor", action="store_true",
+    #                     help="Spawn an additional actor in front of the ego-vehicle")
+
+    args = parser.parse_args()
+
+    try:
+        game_loop(args)
+    except SystemExit:
+        pass
