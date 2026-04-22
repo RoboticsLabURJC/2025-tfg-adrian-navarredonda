@@ -36,6 +36,13 @@ from queue import Queue
 
 from dataset_manager import DatasetSaver
 
+from ultralytics import YOLO
+
+MODEL_PATH = "../../yolo_model/runs/detect/Run_con_parametros/weights/best.pt"
+model = YOLO(MODEL_PATH)
+CLASSES = ["blue_cone", "large_orange_cone", "orange_cone", "unknown_cone", "yellow_cone"]
+
+
 RATE_CONTROL_LOOP = 30
 
 
@@ -134,7 +141,7 @@ def replay_loop(args, view="car"):
     t0_sim = 0.0
 
     try:
-        while True:            
+        while True:         
             
             clock.tick(RATE_CONTROL_LOOP)
 
@@ -172,38 +179,97 @@ def replay_loop(args, view="car"):
             pygame.display.flip()
 
             if dataset is not None:
+                results = model(bgr)
                 # Generate dataset
-                hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-                mask_y = cv2.inRange(hsv, np.array([18, 50, 150]), np.array([40, 255, 255]))
-                mask_w = cv2.inRange(hsv, np.array([0, 0, 200]),  np.array([180, 30, 255]))
-                mask_c = np.zeros(mask_w.shape, np.uint8); mask_c[mask_w>0]=1; mask_c[mask_y>0]=2
-                mask_rgb = np.zeros_like(rgb); mask_rgb[mask_c==1]=[255,255,255]; mask_rgb[mask_c==2]=[255,255,0]
+                hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+                h, w = hsv.shape[:2]
 
-                mask_blue = cv2.inRange(hsv, np.array([90, 100, 100]), np.array([130, 255, 255]))
-                mask_yellow = mask_y  # reutilizamos
-                mask_orange = cv2.inRange(hsv, np.array([5, 100, 100]), np.array([18, 255, 255]))
+                # máscara global vacía
+                mask_cones = np.zeros((h, w), np.uint8)
 
-                mask_cones = np.zeros(mask_blue.shape, np.uint8)
-                mask_cones[mask_blue > 0] = 1
-                mask_cones[mask_yellow > 0] = 2
-                mask_cones[mask_orange > 0] = 3
+                for box in results[0].boxes:
+                    cls = int(box.cls[0])
+                    conf = float(box.conf[0])
 
-                mask_cones_rgb = np.zeros_like(rgb)
+                    if conf < 0.5:
+                        continue
+
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+
+                    # Filtro de distancia
+                    box_w = x2 - x1
+                    box_h = y2 - y1
+                    box_area = box_w * box_h
+                    if box_area < 100:
+                        continue
+
+                    # Filtro de separacion hacia los extremos
+                    cx = (x1 + x2) // 2
+                    center_x = w // 2
+                    offset = abs(cx - center_x)
+                    if offset > w * 0.45:
+                        continue
+
+                    # recorte ROI
+                    hsv_roi = hsv[y1:y2, x1:x2]
+                    s_roi = hsv_roi[:, :, 1]
+
+                    # ===== BLUE =====
+                    if cls == 0: 
+                        mask = cv2.inRange(
+                            hsv_roi,
+                            np.array([10, 50, 70]),
+                            np.array([180, 255, 255])
+                        )
+                        mask_sat = cv2.inRange(s_roi, 70, 255)
+                        mask = cv2.bitwise_and(mask, mask_sat)
+
+                        mask_cones[y1:y2, x1:x2][mask > 0] = 1
+
+                    # ===== YELLOW =====
+                    elif cls == 4:
+                        mask = cv2.inRange(
+                            hsv_roi,
+                            np.array([18, 50, 120]),
+                            np.array([40, 255, 255])
+                        )
+                        mask_cones[y1:y2, x1:x2][mask > 0] = 2
+
+                    # ===== ORANGE =====
+                    elif cls == 2:
+                        mask = cv2.inRange(
+                            hsv_roi,
+                            np.array([5, 100, 100]),
+                            np.array([18, 255, 255])
+                        )
+                        mask_cones[y1:y2, x1:x2][mask > 0] = 3
+
+                mask_cones_rgb = np.zeros_like(bgr)
                 mask_cones_rgb[mask_cones == 1] = [0, 0, 255]     # azul
                 mask_cones_rgb[mask_cones == 2] = [255, 255, 0]   # amarillo
                 mask_cones_rgb[mask_cones == 3] = [255, 165, 0]   # naranja
 
+                mask_y = cv2.inRange(hsv, np.array([18, 50, 150]), np.array([40, 255, 255]))
+                mask_w = cv2.inRange(hsv, np.array([0, 0, 200]),  np.array([180, 30, 255]))
+
+                mask_c = np.zeros(mask_w.shape, np.uint8)
+                mask_c[mask_w > 0] = 1
+                mask_c[mask_y > 0] = 2
+
+                mask_rgb = np.zeros_like(bgr)
+                mask_rgb[mask_c == 1] = [255, 255, 255]   # blanco
+                mask_rgb[mask_c == 2] = [255, 255, 0]     # amarillo
+
                 # You can get the controls of the vehicule at each snapshot
                 # ctrl = vehicle.get_control()
                 # print(ctrl.throttle, ctrl.steer, ctrl.brake)
-
 
                 ctrl = vehicle.get_control()
                 throttle = float(ctrl.throttle)
                 steer    = max(-1.0, min(1.0, float(ctrl.steer)))
                 brake    = float(ctrl.brake)
                 speed = 0.0
-
+                
                 dataset.save_sample(rel_time, bgr, mask_rgb, mask_cones_rgb, throttle, steer, brake, speed)
 
 
