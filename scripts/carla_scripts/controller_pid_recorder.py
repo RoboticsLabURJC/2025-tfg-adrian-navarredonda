@@ -155,7 +155,7 @@ def game_loop(args):
         for box in results[0].boxes:
             cls = int(box.cls[0])
             conf = float(box.conf[0])
-            if conf < 0.5:
+            if conf < 0.6:
                 continue
 
             #writer.writerow([frame_id, cls, conf])
