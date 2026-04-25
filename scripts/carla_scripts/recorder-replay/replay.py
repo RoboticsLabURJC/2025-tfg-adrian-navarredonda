@@ -260,17 +260,37 @@ def replay_loop(args, view="car"):
                 mask_rgb[mask_c == 1] = [255, 255, 255]   # blanco
                 mask_rgb[mask_c == 2] = [255, 255, 0]     # amarillo
 
+                # ================= Escalado de la imagen con mascaras ===============
+                scale = 0.25  # ajusta según necesites
+
+                new_w = int(bgr.shape[1] * scale)
+                new_h = int(bgr.shape[0] * scale)
+
+                mask_cones_scaled = cv2.resize(mask_cones_rgb, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+                # ============== ROI  =================
+                x, y = 0, 75   
+                w_roi, h_roi = 200, 66
+
+                # Asegurar que no nos salimos de la imagen
+                x = max(0, min(x, new_w - w_roi))
+                y = max(0, min(y, new_h - h_roi))
+
+                # Recorte
+                mask_cones_roi = mask_cones_scaled[y:y+h_roi, x:x+w_roi]
+
                 # You can get the controls of the vehicule at each snapshot
                 # ctrl = vehicle.get_control()
                 # print(ctrl.throttle, ctrl.steer, ctrl.brake)
 
+                # ================ Control ============
                 ctrl = vehicle.get_control()
                 throttle = float(ctrl.throttle)
                 steer    = max(-1.0, min(1.0, float(ctrl.steer)))
                 brake    = float(ctrl.brake)
                 speed = 0.0
                 
-                dataset.save_sample(rel_time, bgr, mask_rgb, mask_cones_rgb, throttle, steer, brake, speed)
+                dataset.save_sample(rel_time, bgr, mask_rgb, mask_cones_roi, throttle, steer, brake, speed)
 
 
     except KeyboardInterrupt:

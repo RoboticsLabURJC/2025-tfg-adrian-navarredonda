@@ -33,22 +33,22 @@ cv2.rectangle(image_with_rect, (x, y), (x + w, y + h), (0, 0, 255), 2)
 roi = image_scaled[y:y+h, x:x+w]
 
 # (Opcional) ampliar ROI para verlo mejor
-#roi_resized = cv2.resize(roi, (w*3, h*3), interpolation=cv2.INTER_NEAREST)
+roi_resized = cv2.resize(roi, (w*3, h*3), interpolation=cv2.INTER_NEAREST)
 
-# # 4. IGUALAR ALTURAS
-# h1 = image_with_rect.shape[0]
-# h2 = roi_resized.shape[0]
+# 4. IGUALAR ALTURAS
+h1 = image_with_rect.shape[0]
+h2 = roi_resized.shape[0]
 
-# if h1 != h2:
-#     scale_match = h1 / h2
-#     roi_resized = cv2.resize(
-#         roi_resized,
-#         (int(roi_resized.shape[1] * scale_match), h1),
-#         interpolation=cv2.INTER_NEAREST
-#     )
+if h1 != h2:
+    scale_match = h1 / h2
+    roi_resized = cv2.resize(
+        roi_resized,
+        (int(roi_resized.shape[1] * scale_match), h1),
+        interpolation=cv2.INTER_NEAREST
+    )
 
 # MOSTRAR 
-combined = cv2.hconcat([image_with_rect, roi])
+combined = cv2.hconcat([image_with_rect, roi_resized])
 
 cv2.imshow("Scaled Image + ROI", combined)
 cv2.waitKey(0)
