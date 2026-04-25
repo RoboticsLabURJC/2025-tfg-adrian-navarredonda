@@ -1,3 +1,35 @@
+"""
+Este script ejecuta una simulación en CARLA donde un vehículo autónomo es capaz
+de seguir un carril delimitado por conos utilizando visión artificial.
+
+Se emplea un modelo de YOLO para identificar conos en la imagen de una cámara RGB montada en el vehículo. 
+A partir de las detecciones, se calcula una línea central del carril y se aplica un controlador
+PID para ajustar la dirección del vehículo en tiempo real.
+
+Además:
+- Se registran datos de velocidad en un archivo CSV
+- Se graba la simulación en un archivo .log de CARLA
+- Se visualiza la imagen procesada con anotaciones
+
+-------------------------------------------------------------
+Uso:
+----
+Ejecutar desde terminal:
+
+    python script.py [opciones]
+
+Opciones disponibles:
+---------------------
+--log_path       Ruta donde se guardarán los logs (por defecto ./logs/)
+--town           Mapa de CARLA a cargar (por defecto "Track3")
+--port           Puerto del servidor CARLA (por defecto 3010)
+--tport          Puerto del Traffic Manager (por defecto 3020)
+
+Ejemplo:
+
+    python script.py --town Track3 --port 3010
+"""
+
 import carla
 import time
 import pygame
