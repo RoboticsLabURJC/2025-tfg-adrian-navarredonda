@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 # ================= CARGAR IMAGEN =================
-img = cv2.imread("logs/Track3/1777136391344_dataset/mask_fs/mask_fs_00000167.png")
+img = cv2.imread("logs/Track3/1777136391344_dataset/mask_fs/mask_fs_0000167.png")
 
 h, w = img.shape[:2]
 
