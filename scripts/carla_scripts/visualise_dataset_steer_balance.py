@@ -1,9 +1,18 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import argparse
 
+parser = argparse.ArgumentParser(description="Visualización de distribución de steering")
+parser.add_argument(
+    "--csv_path",
+    type=str,
+    required=True,
+    help="Ruta al archivo CSV del dataset"
+)
+
+args = parser.parse_args()
 # ================= CARGAR CSV =================
-csv_path = "logs/Track3/1777136391344_dataset/dataset.csv"
-df = pd.read_csv(csv_path)
+df = pd.read_csv(args.csv_path)
 
 steer = df["steer"]
 

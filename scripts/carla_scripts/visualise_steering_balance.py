@@ -1,10 +1,21 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import argparse
+
+# ================= ARGUMENTOS =================
+parser = argparse.ArgumentParser(description="Visualización de distribución de steering")
+parser.add_argument(
+    "--csv_path",
+    type=str,
+    required=True,
+    help="Ruta al archivo CSV del dataset"
+)
+
+args = parser.parse_args()
 
 # ================= CARGAR CSV =================
-csv_path = "logs/Track3/1777136391344_dataset/dataset.csv"
-df = pd.read_csv(csv_path)
+df = pd.read_csv(args.csv_path)
 
 steer = df["steer"]
 
@@ -14,7 +25,6 @@ straight = steer[(steer >= -0.1) & (steer <= 0.1)]
 right = steer[steer > 0.1]
 
 # ================= BINS GLOBALES =================
-# 30 bins uniformes en todo el rango [-1, 1]
 bins = np.linspace(-1.0, 1.0, 51)
 
 # ================= HISTOGRAMAS =================
@@ -22,7 +32,6 @@ hist_left, _ = np.histogram(left, bins=bins)
 hist_straight, _ = np.histogram(straight, bins=bins)
 hist_right, _ = np.histogram(right, bins=bins)
 
-# mismo eje Y para todos
 y_max = max(hist_left.max(), hist_straight.max(), hist_right.max())
 
 # ================= PRINT INFO =================
