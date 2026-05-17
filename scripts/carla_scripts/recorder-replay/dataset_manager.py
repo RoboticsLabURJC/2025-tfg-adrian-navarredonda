@@ -39,9 +39,15 @@ class DatasetSaver:
 
         self.rgb_foldername = "rgb"
         self.mask_foldername = "mask"
-        self.mask2_foldername = "mask_fs"
+        self.mask_cones_rgb_foldername = "mask_fs"
+        self.cones_ohe_foldername = "cones_ohe"
+        self.bb_box_ohe_foldername = "bb_box_ohe"
+        self.splines_ohe_foldername = "splines_ohe"
 
-        self.mask2_path = os.path.join(self.dataset_path, self.mask2_foldername)
+        self.mask_cones_rgb_path = os.path.join(self.dataset_path, self.mask_cones_rgb_foldername)
+        self.cones_ohe_path = os.path.join(self.dataset_path, self.cones_ohe_foldername)
+        self.bb_box_ohe_path = os.path.join(self.dataset_path, self.bb_box_ohe_foldername)
+        self.splines_ohe_path = os.path.join(self.dataset_path, self.splines_ohe_foldername)
 
         self.rgb_path = os.path.join(self.dataset_path, self.rgb_foldername)
         self.mask_path = os.path.join(self.dataset_path, self.mask_foldername)
@@ -51,34 +57,46 @@ class DatasetSaver:
 
         os.makedirs(self.rgb_path, exist_ok=True)
         os.makedirs(self.mask_path, exist_ok=True)
-        os.makedirs(self.mask2_path, exist_ok=True)
+        os.makedirs(self.mask_cones_rgb_path, exist_ok=True)
+        os.makedirs(self.cones_ohe_path, exist_ok=True)
+        os.makedirs(self.bb_box_ohe_path, exist_ok=True)
+        os.makedirs(self.splines_ohe_path, exist_ok=True)
 
         print (f"DatasetSaver loaded for {self.dataset_path}")
 
         if not os.path.exists(self.csv_filename):
             os.makedirs(os.path.dirname(self.csv_filename), exist_ok=True)
             with open(self.csv_filename, "w", newline="") as f:
-                csv.writer(f).writerow(["rgb_path","mask_path","mask_fs_path","timestamp","throttle","steer","brake","speed"])
+                csv.writer(f).writerow(["rgb_path","mask_path","mask_fs_path", "cones_ohe", "bb_box_ohe", "spline_ohe","timestamp","throttle","steer","brake","speed"])
 
-    def save_sample (self, timestamp, bgr, mask_rgb, mask_cones_rgb, throttle, steer, brake, speed):
+    def save_sample (self, timestamp, bgr, mask_rgb, mask_cones_rgb, cones_ohe, bb_box_ohe, spline_ohe, throttle, steer, brake, speed):
         
         rgb_filename  = f"rgb_{self.counter:08d}.png"
         mask_filename = f"mask_{self.counter:08d}.png"
-        mask2_filename = f"mask_fs_{self.counter:08d}.png"
+        mask_cones_rgb_filename = f"mask_fs_{self.counter:08d}.png"
+        cones_ohe_filename = f"cones_ohe_{self.counter:08d}"
+        bb_box_ohe_filename = f"bb_box_ohe_{self.counter:08d}"
+        spline_ohe_filename = f"spline_ohe_{self.counter:08d}"
         
         self.counter = self.counter + 1
 
         cv2.imwrite(os.path.join(self.rgb_path,  rgb_filename),  bgr)
         cv2.imwrite(os.path.join(self.mask_path, mask_filename),
                     cv2.cvtColor(mask_rgb, cv2.COLOR_RGB2BGR))
-        cv2.imwrite(os.path.join(self.mask2_path, mask2_filename),
+        cv2.imwrite(os.path.join(self.mask_cones_rgb_path, mask_cones_rgb_filename),
                     cv2.cvtColor(mask_cones_rgb, cv2.COLOR_RGB2BGR))
+        np.save(os.path.join(self.cones_ohe_path, cones_ohe_filename), cones_ohe)
+        np.save(os.path.join(self.bb_box_ohe_path, bb_box_ohe_filename), bb_box_ohe)
+        np.save(os.path.join(self.splines_ohe_path, spline_ohe_filename), spline_ohe)
 
         with open(self.csv_filename, "a", newline="") as f:
             csv.writer(f).writerow([
                 f"/{self.rgb_foldername}/{rgb_filename}",
                 f"/{self.mask_foldername}/{mask_filename}",
-                f"/{self.mask2_foldername}/{mask2_filename}",
+                f"/{self.mask_cones_rgb_foldername}/{mask_cones_rgb_filename}",
+                f"/{self.cones_ohe_foldername}/{cones_ohe_filename}",
+                f"/{self.bb_box_ohe_foldername}/{bb_box_ohe_filename}",
+                f"/{self.splines_ohe_foldername}/{spline_ohe_filename}",
                 timestamp, throttle, steer, brake, speed
             ])        
      

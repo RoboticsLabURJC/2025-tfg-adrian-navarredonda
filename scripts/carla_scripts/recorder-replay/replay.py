@@ -185,7 +185,12 @@ def replay_loop(args, view="car"):
                 h, w = hsv.shape[:2]
 
                 # máscara global vacía
-                mask_cones = np.zeros((h, w), np.uint8)
+                mask_cones = np.zeros((h, w), np.uint8) # Conos
+                bbox_img = np.zeros((h, w, 3), dtype=np.uint8) # Bounding boxes
+                spline_img = np.zeros((h, w, 3), dtype=np.uint8) # spline entre centro de conos
+
+                blue_centers = []
+                yellow_centers = []
 
                 for box in results[0].boxes:
                     cls = int(box.cls[0])
@@ -194,7 +199,12 @@ def replay_loop(args, view="car"):
                     if conf < 0.5:
                         continue
 
+                    # Esquinas bounding box
                     x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+
+                    # Centros bounding box
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
 
                     # Filtro de distancia
                     box_w = x2 - x1
@@ -204,7 +214,6 @@ def replay_loop(args, view="car"):
                         continue
 
                     # Filtro de separacion hacia los extremos
-                    cx = (x1 + x2) // 2
                     center_x = w // 2
                     offset = abs(cx - center_x)
                     if offset > w * 0.45:
@@ -216,6 +225,7 @@ def replay_loop(args, view="car"):
 
                     # ===== BLUE =====
                     if cls == 0: 
+                        # Guardar conos azules
                         mask = cv2.inRange(
                             hsv_roi,
                             np.array([10, 50, 70]),
@@ -226,14 +236,39 @@ def replay_loop(args, view="car"):
 
                         mask_cones[y1:y2, x1:x2][mask > 0] = 1
 
+                        # Guardar centros bounding box para spline
+                        blue_centers.append((cx, cy))
+
+                        # Guardar Bounding box azul de cono
+                        cv2.rectangle(
+                            bbox_img,
+                            (x1, y1),
+                            (x2, y2),
+                            (255, 0, 0),
+                            -1
+                        )
+
                     # ===== YELLOW =====
                     elif cls == 4:
+                        # Guardar cono amaillo
                         mask = cv2.inRange(
                             hsv_roi,
                             np.array([18, 50, 120]),
                             np.array([40, 255, 255])
                         )
                         mask_cones[y1:y2, x1:x2][mask > 0] = 2
+
+                        # Guardar centros bounding box para spline
+                        yellow_centers.append((cx, cy))
+
+                        # Guaradar bounding box amarillo de cono
+                        cv2.rectangle(
+                            bbox_img,
+                            (x1, y1),
+                            (x2, y2),
+                            (0, 255, 255),
+                            -1
+                        )
 
                     # ===== ORANGE =====
                     elif cls == 2:
@@ -244,9 +279,19 @@ def replay_loop(args, view="car"):
                         )
                         mask_cones[y1:y2, x1:x2][mask > 0] = 3
 
+                        # Guaradar bounding box naranja de cono
+                        cv2.rectangle(
+                            bbox_img,
+                            (x1, y1),
+                            (x2, y2),
+                            (0, 165, 255),
+                            -1
+                        )
+
+                # Mascaras para conos 
                 mask_cones_rgb = np.zeros_like(bgr)
-                mask_cones_rgb[mask_cones == 1] = [0, 0, 255]     # azul
-                mask_cones_rgb[mask_cones == 2] = [255, 255, 0]   # amarillo
+                mask_cones_rgb[mask_cones == 1] = [255, 0, 0]
+                mask_cones_rgb[mask_cones == 2] = [0, 255, 255]
                 mask_cones_rgb[mask_cones == 3] = [255, 165, 0]   # naranja
 
                 mask_y = cv2.inRange(hsv, np.array([18, 50, 150]), np.array([40, 255, 255]))
@@ -267,6 +312,9 @@ def replay_loop(args, view="car"):
                 new_h = int(bgr.shape[0] * scale)
 
                 mask_cones_scaled = cv2.resize(mask_cones_rgb, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+                bb_box_scaled = cv2.resize(bbox_img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+                spline_scaled = cv2.resize(spline_img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
 
                 # ============== ROI  =================
                 x, y = 0, 75   
@@ -278,6 +326,32 @@ def replay_loop(args, view="car"):
 
                 # Recorte
                 mask_cones_roi = mask_cones_scaled[y:y+h_roi, x:x+w_roi]
+                bb_box_roi = bb_box_scaled[y:y+h_roi, x:x+w_roi]
+                spline_roi = spline_scaled[y:y+h_roi, x:x+w_roi]
+
+                # One hot encoding
+                # conos
+                blue_mask = np.all(mask_cones_roi == [255, 0, 0], axis=2)
+                yellow_mask = np.all(mask_cones_roi == [0, 255, 255], axis=2)
+                # bb box
+                bb_box_blue_mask = np.all(bb_box_roi == [255, 0, 0], axis=2)
+                bb_box_yellow_mask = np.all(bb_box_roi == [0, 255, 255], axis=2)
+                # spline
+                spline_blue_mask = np.all(spline_roi == [255, 0, 0], axis=2)
+                spline_yellow_mask = np.all(spline_roi == [0, 255, 255], axis=2)
+
+                # conos
+                cone_one_hot = np.zeros((h_roi, w_roi, 2), dtype=np.uint8)
+                cone_one_hot[:, :, 0][blue_mask] = 1
+                cone_one_hot[:, :, 1][yellow_mask] = 1
+                # bb box
+                bb_box_one_hot = np.zeros((h_roi, w_roi, 2), dtype=np.uint8)
+                bb_box_one_hot[:, :, 0][bb_box_blue_mask] = 1
+                bb_box_one_hot[:, :, 1][bb_box_yellow_mask] = 1
+                # spline
+                spline_one_hot = np.zeros((h_roi, w_roi, 2), dtype=np.uint8)
+                spline_one_hot[:, :, 0][spline_blue_mask] = 1
+                spline_one_hot[:, :, 1][spline_yellow_mask] = 1
 
                 # You can get the controls of the vehicule at each snapshot
                 # ctrl = vehicle.get_control()
@@ -290,7 +364,7 @@ def replay_loop(args, view="car"):
                 brake    = float(ctrl.brake)
                 speed = 0.0
                 
-                dataset.save_sample(rel_time, bgr, mask_rgb, mask_cones_roi, throttle, steer, brake, speed)
+                dataset.save_sample(rel_time, bgr, mask_rgb, mask_cones_roi, cone_one_hot, bb_box_one_hot, spline_one_hot, throttle, steer, brake, speed)
 
 
     except KeyboardInterrupt:

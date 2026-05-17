@@ -9,6 +9,10 @@ A partir de un CSV que contiene las etiquetas del dataset, el script:
 - Asume que las imágenes están indexadas por el número de fila del CSV
   (rgb/rgb_XXXXXXXX.png y mask_fs/mask_fs_XXXXXXXX.png)
 - Copia dichas imágenes desde el dataset original en /logs hacia un directorio temporal en /tmp
+
+python3 check_percen_max_steer.py --csv_path logs/Track5_2/1777830496303_dataset/dataset.csv 
+                                  --logs_base logs/Track5_2/1777830496303_dataset/
+
 """
 
 import os

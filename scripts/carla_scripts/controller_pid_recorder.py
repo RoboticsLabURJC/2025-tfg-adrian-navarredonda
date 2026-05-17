@@ -43,7 +43,7 @@ import argparse
 import random
 import sys
 
-MODEL_PATH = "../../models/runs/detect/Run_con_parametros/weights/best.pt"
+MODEL_PATH = "../../yolo_model/runs/detect/Run_con_parametros/weights/best.pt"
 model = YOLO(MODEL_PATH)
 CSV_FILENAME = "data.csv"
 RATE_CONTROL_LOOP = 30
@@ -54,12 +54,14 @@ WIDTH, HEIGHT = 1000, 800
 LANE_WIDTH_PX = 180
 
 
-kp, ki, kd = 0.004, 0.0001, 0.001
+kp = 0.006
+ki = 0.00005
+kd = 0.0005
 prev_error = 0.0
 integral = 0.0
 
 control = carla.VehicleControl()
-control.throttle = 0.5
+control.throttle = 0.4
 control.brake = 0.0
 
 camera_image = None
@@ -225,7 +227,7 @@ def game_loop(args):
             for i in range(len(spline) - 1):
                 cv2.line(annotated, spline[i], spline[i + 1], (0, 255, 0), 2)
 
-            TARGET_Y = int(HEIGHT * 0.6)
+            TARGET_Y = int(HEIGHT * 0.65)
             tx, ty = spline[-1]
             for x, y in spline:
                 if y > TARGET_Y:

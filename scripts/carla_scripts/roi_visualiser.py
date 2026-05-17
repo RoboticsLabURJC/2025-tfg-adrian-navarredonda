@@ -4,8 +4,19 @@ This is useful to select the ROI we want
 """
 
 import cv2
+import argparse
 
-image = cv2.imread("logs/Track3/1776881146906_dataset/rgb/rgb_00000141.png")
+parser = argparse.ArgumentParser(description="Visualización de ROI")
+parser.add_argument(
+    "--img_path",
+    type=str,
+    required=True,
+    help="Ruta a la imagen del dataset"
+)
+
+args = parser.parse_args()
+
+image = cv2.imread(args.img_path)
 
 # 1. ESCALAR IMAGEN 
 scale = 0.25  # ajusta según necesites
