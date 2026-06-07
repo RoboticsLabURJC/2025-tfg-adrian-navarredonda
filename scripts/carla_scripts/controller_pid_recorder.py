@@ -1,4 +1,5 @@
 """
+V1
 Este script ejecuta una simulación en CARLA donde un vehículo autónomo es capaz
 de seguir un carril delimitado por conos utilizando visión artificial.
 
@@ -44,7 +45,8 @@ import random
 import sys
 
 MODEL_PATH = "../../yolo_model/runs/detect/Run_con_parametros/weights/best.pt"
-model = YOLO(MODEL_PATH)
+device = "cuda:1"
+model = YOLO(MODEL_PATH).to(device)
 CSV_FILENAME = "data.csv"
 RATE_CONTROL_LOOP = 30
 VEHICLE_MODEL = "vehicle.kart.kart"
@@ -67,6 +69,8 @@ control.brake = 0.0
 camera_image = None
 frame_id = 0
 last_time = time.time()
+
+prev_target_x = 0
 
 def game_loop(args):
     pygame.init()
@@ -135,7 +139,7 @@ def game_loop(args):
     # ================= PID =================
 
     def process_image(image):
-        global camera_image, frame_id
+        global camera_image, frame_id, prev_target_x
         global prev_error, integral, last_time, control
 
         frame_id += 1
@@ -214,6 +218,14 @@ def game_loop(args):
                 cy = int(y)
                 centerline.append((cx, cy))
 
+        # ===== LIMITAR A LOS 4 CONOS MÁS CERCANOS =====
+        left_cones = sorted(left_cones, key=lambda p: p[1], reverse=True)[:3]
+        right_cones = sorted(right_cones, key=lambda p: p[1], reverse=True)[:3]
+
+        # Reordenar de arriba a abajo para el spline
+        left_cones.sort(key=lambda p: p[1])
+        right_cones.sort(key=lambda p: p[1])
+
         # ===== SPLINE CENTRAL + CONTROL =====
         if len(centerline) >= 3:
             pts = np.array(centerline)
@@ -233,6 +245,12 @@ def game_loop(args):
                 if y > TARGET_Y:
                     tx, ty = x, y
                     break
+
+            pixel_diff = abs(tx - prev_target_x)
+            print("-"*60)
+            print(f"Target diff: {pixel_diff:.2f}px")
+            print("-"*60)
+            prev_target_x = tx
 
             error = tx - WIDTH / 2
             integral += error * dt
