@@ -63,7 +63,7 @@ CLASSES = [
     "yellow_cone"
 ]
 
-LANE_WIDTH_PX = 400
+LANE_WIDTH_PX = 600
 
 # Punto fijo en el centro inferior de la imagen (posición del kart).
 # Siempre se añade a la centerline para que el spline esté anclado
@@ -102,7 +102,7 @@ SCAN_LINES_Y = [
 ]
 
 # PID constants
-kp = 0.003
+kp = 0.004
 ki = 0.00007
 kd = 0.0005
 prev_error = 0.0
@@ -164,10 +164,9 @@ def estimate_missing_side(known_points, side, lane_width):
     Si falta un lado completo, estima su posición desplazando LANE_WIDTH_PX.
     side='left'  desplazar a la derecha; side='right'  a la izquierda.
     """
-    estimated = []
+    points = known_points[1:] if len(known_points) > 1 else known_points
     dx = lane_width if side == 'left' else -lane_width
-    for (x, y) in known_points:
-        estimated.append((x + dx, y))
+    estimated = [(x + dx, y) for (x, y) in points]
     return estimated
 
 def find_central_spline(left, right):
