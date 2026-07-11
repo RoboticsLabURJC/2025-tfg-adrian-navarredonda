@@ -1,12 +1,2 @@
-scripts/tfg_env/
-
 models/data.v4i.yolov11
 models/runs
-
-Dockerfile
-
-Formula-Student-Driverless-Simulator/
-
-random-track-generator/
-
-kart_model/
