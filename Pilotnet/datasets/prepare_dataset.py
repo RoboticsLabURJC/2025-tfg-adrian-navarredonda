@@ -108,9 +108,12 @@ def load_circuit(circuit_dir, image_col):
             print(f"[ERROR] Faltan columnas {missing} en {csv_path}")
             return []
 
+        csv_dir = os.path.dirname(os.path.abspath(csv_path))
+
         for row in reader:
             img_rel = row[image_col].lstrip("/")
-            img_abs = os.path.abspath(os.path.join(circuit_dir, img_rel))
+            img_abs = os.path.abspath(os.path.join(csv_dir, img_rel))
+            img_abs = img_abs + ".npy"
 
             if not os.path.isfile(img_abs):
                 skipped += 1
@@ -193,14 +196,10 @@ def split_rows(rows, train_ratio, val_ratio, seed, shuffle):
 
 def write_split_csv(rows, out_dir, split_name):
     """
-    Escribe el dataset.csv en out_dir/<split_name>/
+    Escribe out_dir/<split_name>/dataset.csv
     con las columnas que espera PilotNetDataset: mask_path, steer, throttle.
-
-    Se usa 'mask_path' como nombre de columna porque es el que lee
-    PilotNetDataset, independientemente de qué columna de imagen usamos.
-    La ruta escrita es absoluta para no tener que copiar imágenes.
     """
-    folder = os.path.join(out_dir, f"Deepracer_BaseMap_{split_name}")
+    folder = os.path.join(out_dir, split_name)
     os.makedirs(folder, exist_ok=True)
 
     csv_path = os.path.join(folder, "dataset.csv")
@@ -208,9 +207,12 @@ def write_split_csv(rows, out_dir, split_name):
         writer = csv.writer(f)
         writer.writerow(["mask_path", "steer", "throttle"])
         for row in rows:
-            writer.writerow([row["img_abs"], row["steer"], row["throttle"]])
+            # Ruta relativa desde la carpeta del CSV hasta la imagen,
+            # que es lo que espera PilotNetDataset al hacer os.path.join(folder, img_rel)
+            img_rel = os.path.relpath(row["img_abs"], folder)
+            writer.writerow([img_rel, row["steer"], row["throttle"]])
 
-    print(f"  [{split_name:>5}]  {len(rows):>6} muestras  →  {csv_path}")
+    print(f"  [{split_name:>10}]  {len(rows):>6} muestras  →  {csv_path}")
     return folder
 
 
@@ -261,15 +263,25 @@ def main():
     # ── Escribir CSVs ────────────────────────────────────────────────────────
     print("\nEscribiendo splits:")
     train_folder = write_split_csv(train_rows, args.output_dir, "train")
-    val_folder   = write_split_csv(val_rows,   os.path.join(args.output_dir, "validation"), "val")
-    test_folder  = write_split_csv(test_rows,  os.path.join(args.output_dir, "test"),       "test")
+    val_folder   = write_split_csv(val_rows,   args.output_dir, "validation")
+    test_folder  = write_split_csv(test_rows,  args.output_dir, "test")
+
+    # ── Resumen de distribución por split ───────────────────────────────────
+    print("\n── Distribución final por split ──────────────────────────────")
+    for split_name, split_rows_list in [("train", train_rows), ("val", val_rows), ("test", test_rows)]:
+        buckets = {"left": 0, "straight": 0, "right": 0}
+        for row in split_rows_list:
+            buckets[steer_category(row["steer"])] += 1
+        total = len(split_rows_list)
+        parts = "  ".join(
+            f"{cat}: {cnt:>5} ({100*cnt/total:.1f}%)"
+            for cat, cnt in buckets.items()
+        )
+        print(f"  {split_name:>5} ({total:>6} muestras)  →  {parts}")
+    print()
 
     print(f"\n✓ Listo. Para entrenar ejecuta:")
     print(f"""
-  bash train.sh
-
-  O directamente:
-
   python train_final.py \\
     --data_dir {train_folder} \\
     --val_dir  {val_folder} \\
