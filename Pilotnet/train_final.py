@@ -100,7 +100,7 @@ def parse_args():
                         help="Proporción para validación (por defecto 0.2 = 20%)")
     parser.add_argument("--preprocess", action='append', default=None,
                         help="preprocessing info: choose from crop/nocrop and normal/extreme")
-    parser.add_argument("--base_dir", type=str, default='/home/sergior/Downloads/pruebas', help="Where to save outputs")
+    parser.add_argument("--base_dir", type=str, default='experiments', help="Where to save outputs")
     parser.add_argument("--comment", type=str, default='No augs / no shuffle / no mirror', help="Experiment comment")
 
     # Hparams

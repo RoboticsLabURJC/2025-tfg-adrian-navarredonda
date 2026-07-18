@@ -102,7 +102,7 @@ SCAN_LINES_Y = [
 ]
 
 # PID constants
-kp = 0.004
+kp = 0.0045
 ki = 0.00007
 kd = 0.0005
 prev_error = 0.0
@@ -364,8 +364,10 @@ def game_loop(args):
 
         # Estimate missing side (primer intento: lado completamente vacío)
         if not left and right:
+            print("LADO IZQUIERDO INFERIDO")
             left = estimate_missing_side(right, 'right', LANE_WIDTH_PX)
         elif not right and left:
+            print("LADO DERECHO INFERIDO")
             right = estimate_missing_side(left, 'left', LANE_WIDTH_PX)
 
         # Create centerline

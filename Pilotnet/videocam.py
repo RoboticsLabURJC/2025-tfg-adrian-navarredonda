@@ -1,7 +1,7 @@
 import carla, time, pygame, numpy as np, cv2, torch, queue
 from torchvision import transforms
 from queue import Queue
-from utils.pilotnet import PilotNet
+from Pilotnet.utils.pilotnet import PilotNet
 from PIL import Image
 import sys
 from collections import deque

@@ -6,6 +6,7 @@ from queue import Queue
 from torchvision import transforms
 from utils.pilotnet import PilotNet
 from PIL import Image
+import random
 
 pid_on = False
 prev_timeglobal_var = 0.0
@@ -13,7 +14,7 @@ last_error_steer = 0.0
 Kp_steer, Kd_steer = 0.1, 1e-5
 Kp_throttle = 0.02
 last_net = None
-MODEL_PATH = "experiments/exp_debug_1769971700/trained_models/pilot_net_model_best_123.pth"
+MODEL_PATH = "experiments/exp_002/trained_models/pilot_net_model_best_123.pth"
 image_shape = (66, 200, 3)
 model = PilotNet(image_shape, num_labels=2)
 model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
@@ -25,8 +26,8 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)
 ])
 
-HOST, PORT = '127.0.0.1', 2000
-VEHICLE_MODEL = 'vehicle.finaldeepracer.aws_deepracer'
+HOST, PORT = '127.0.0.1', 3010
+VEHICLE_MODEL = 'vehicle.kart.kart'
 WIDTH, HEIGHT = 800, 600
 FPS = 30.0
 FIXED_DT = 1.0 / FPS
@@ -38,7 +39,7 @@ pygame.display.set_caption("DeepRacer - PID 140° -> Red 90°")
 
 client = carla.Client(HOST, PORT)
 client.set_timeout(5.0)
-world = client.get_world()
+world = client.load_world("Track3")
 
 settings = world.get_settings()
 settings.synchronous_mode = True
@@ -84,10 +85,10 @@ vehicle_bp = bp.find(VEHICLE_MODEL)
 # )
 
 #-------------------------TRACK05---------------------------------
-spawn_point = carla.Transform(
-   carla.Location(x=-3.7, y=-4, z=0.5),
-   carla.Rotation(yaw=-120)
-)
+# spawn_point = carla.Transform(
+#    carla.Location(x=-3.7, y=-4, z=0.5),
+#    carla.Rotation(yaw=-120)
+# )
 
 #-------------------TRACK06-gillesvilleneuve----------------------
 # spawn_point = carla.Transform(
@@ -113,7 +114,7 @@ spawn_point = carla.Transform(
 #spawn_point = carla.Transform(carla.Location(x=-67, y=318, z=0.5), carla.Rotation(yaw=180-25))
 
 
-
+spawn_point = random.choice(world.get_map().get_spawn_points())
 vehicle = world.try_spawn_actor(vehicle_bp, spawn_point)
 if not vehicle:
     print("Error al spawnear el vehículo"); raise SystemExit
@@ -140,7 +141,7 @@ cam_bp_thirdperson.set_attribute('fov', '90')
 cam_bp_thirdperson.set_attribute('sensor_tick', '0.0')
 
 
-cam_tf = carla.Transform(carla.Location(x=0.13, z=0.13), carla.Rotation(pitch=-30))
+cam_tf = carla.Transform(carla.Location(x=0, y=-0.65, z=1.4))
 cam_pid = world.spawn_actor(cam_bp_pid, cam_tf, attach_to=vehicle)
 cam_net = world.spawn_actor(cam_bp_net, cam_tf, attach_to=vehicle)
 
@@ -298,7 +299,7 @@ while running:
             steer, throttle = model(x)[0].tolist()
 
         steer    = float(np.clip(steer,    -1.0, 1.0))
-        throttle = float(np.clip(throttle,  0.0, 1.0))
+        throttle = float(np.clip(throttle,  0.5, 0.5))
         vehicle.apply_control(carla.VehicleControl(throttle=throttle, steer=steer))
 
         print("Throttle: ",throttle," Steer= ",steer)
