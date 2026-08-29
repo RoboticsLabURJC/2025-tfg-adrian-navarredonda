@@ -13,11 +13,12 @@ import numpy as np
 import pandas as pd
 
 # --- CONFIG: ajusta esto a tu CSV -----------------------------------------
-INPUT_CSV = "../../Carla_uassets/maps/map_csvs/track9random_track.csv"
+INPUT_CSV = "../../Carla_uassets/maps/map_csvs/track1random_track.csv"
 OUTPUT_CSV = "reftrack.csv"
 COLOR_LEFT = "blue"      # valor exacto de la columna 'color' para el lado izquierdo
 COLOR_RIGHT = "yellow"   # valor exacto de la columna 'color' para el lado derecho
 PLOT = True              # pon a False para no mostrar la grafica de verificacion
+CM_TO_M = True           # True si el CSV de conos viene en centimetros (unidad nativa de Unreal/CARLA)
 # ---------------------------------------------------------------------------
 
 
@@ -46,6 +47,11 @@ def main():
 
     left = df[df["color"] == COLOR_LEFT][["x", "y"]].to_numpy()
     right = df[df["color"] == COLOR_RIGHT][["x", "y"]].to_numpy()
+
+    if CM_TO_M:
+        left = left / 100.0
+        right = right / 100.0
+
     print(f"Conos izquierda: {len(left)}, conos derecha: {len(right)}")
 
     if len(left) == 0 or len(right) == 0:
