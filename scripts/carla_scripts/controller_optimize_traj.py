@@ -145,6 +145,9 @@ class TrajectoryTracker:
         self.speed_integral = 0.0
         self.previous_speed_error = 0.0
 
+    # ========================================================
+    # FIND NEAREST POINT IN FRONT OF THE KART
+    # ========================================================
     def find_nearest_index(self, x, y):
         best_index, best_distance = self.current_index, float("inf")
 
@@ -182,6 +185,7 @@ class TrajectoryTracker:
         kart_yaw = math.radians(transform.rotation.yaw)
 
         target = self.trajectory[target_index]
+
         vector_x = target["x"] - kart_x
         vector_y = target["y"] - kart_y
 
@@ -218,21 +222,14 @@ class TrajectoryTracker:
 
 
 # ============================================================
-# LOGGING
+# SPEED CSV LOGGING
 # ============================================================
-def create_log(log_path):
-    os.makedirs(log_path, exist_ok=True)
-
-    fh = open(os.path.join(log_path, "trajectory_data.csv"), "w", newline="")
-    writer = csv.writer(fh)
-
-    writer.writerow([
-        "sim_time", "x", "y", "yaw", "speed_mps",
-        "target_speed_mps", "nearest_index", "nearest_distance",
-        "angle_error", "steer", "throttle", "brake"
-    ])
-
-    return fh, writer
+def create_speed_log(log_path):
+    csv_file_path = log_path + "/data.csv"
+    csv_fh = open(csv_file_path, "w", newline="")
+    csv_writer = csv.writer(csv_fh)
+    csv_writer.writerow(["sim_time", "speed_m_s"])
+    return csv_fh, csv_writer
 
 
 # ============================================================
@@ -280,9 +277,6 @@ class TrajectoryVisualizer:
     # CREATE CAMERAS
     # ========================================================
     def create_cameras(self):
-        # ----------------------------------------------------
-        # Top camera
-        # ----------------------------------------------------
         bp = self.create_camera_bp()
         bp.set_attribute("fov", str(TOP_CAMERA_FOV))
 
@@ -296,9 +290,6 @@ class TrajectoryVisualizer:
 
         self.top_camera.listen(self._top_callback)
 
-        # ----------------------------------------------------
-        # Kart camera
-        # ----------------------------------------------------
         bp2 = self.create_camera_bp()
         bp2.set_attribute("fov", str(KART_CAMERA_FOV))
 
@@ -329,8 +320,6 @@ class TrajectoryVisualizer:
     # ========================================================
     def world_to_top(self, x, y, z=0.0):
         camera_transform = self.top_camera.get_transform()
-
-        # Transform world coordinates into camera-local coordinates.
         point_camera = camera_transform.inverse_transform(carla.Location(x=x, y=y, z=z))
 
         depth = point_camera.x
@@ -338,15 +327,12 @@ class TrajectoryVisualizer:
         if depth <= 0.001:
             return None
 
-        # CARLA camera FOV is horizontal.
         fx = self.top_width / (2.0 * math.tan(math.radians(TOP_CAMERA_FOV) / 2.0))
         fy = fx
 
         cx = self.top_width / 2.0
         cy = self.top_height / 2.0
 
-        # Camera coordinates: X forward, Y right, Z up.
-        # Image coordinates: X right, Y down.
         pixel_x = cx + fx * (point_camera.y / depth)
         pixel_y = cy - fy * (point_camera.z / depth)
 
@@ -356,18 +342,12 @@ class TrajectoryVisualizer:
     # DRAW TOP OVERLAY
     # ========================================================
     def draw_top_overlay(self, target):
-        # ----------------------------------------------------
-        # Trajectory
-        # ----------------------------------------------------
         for p in self.trajectory:
             point = self.world_to_top(p["x"], p["y"], 0.0)
 
             if point is not None:
                 pygame.draw.circle(self.display, (0, 255, 0), point, 2)
 
-        # ----------------------------------------------------
-        # Kart
-        # ----------------------------------------------------
         vt = self.vehicle.get_transform()
         kart_point = self.world_to_top(vt.location.x, vt.location.y, vt.location.z)
 
@@ -408,18 +388,12 @@ class TrajectoryVisualizer:
 
         self.display.fill((0, 0, 0))
 
-        # ----------------------------------------------------
-        # Top camera
-        # ----------------------------------------------------
         if self.top_image is not None:
             img = pygame.surfarray.make_surface(self.top_image.swapaxes(0, 1))
             self.display.blit(img, (0, 0))
 
         self.draw_top_overlay(target)
 
-        # ----------------------------------------------------
-        # Kart camera
-        # ----------------------------------------------------
         if self.kart_image is not None:
             img = pygame.surfarray.make_surface(self.kart_image.swapaxes(0, 1))
             self.display.blit(img, (DISPLAY_WIDTH // 2, 0))
@@ -495,12 +469,26 @@ def game_loop(args):
         print(f"[CARLA] Cargando mapa {args.town}")
         world = client.load_world(args.town)
 
-    log_path = os.path.join(args.log_path, str(int(time.time())) + "_" + args.town)
+    # ========================================================
+    # LOG DIRECTORY
+    # ========================================================
+    log_path = args.log_path + "/" + str(int(time.time())) + "_" + args.town + "/"
     os.makedirs(log_path, exist_ok=True)
+
+    # ========================================================
+    # SPEED CSV LOG
+    # ========================================================
+    csv_fh, csv_writer = create_speed_log(log_path)
+
+    # ========================================================
+    # CARLA RECORDER
+    # ========================================================
+    log_filename = log_path + args.town + ".log"
+    print(log_filename)
+    client.start_recorder(log_filename, True)
 
     vehicle = None
     visualizer = None
-    log_file = None
 
     try:
         vehicle = spawn_kart(world)
@@ -514,9 +502,10 @@ def game_loop(args):
         control.brake = 0.0
         control.steer = 0.0
 
-        log_file, log_writer = create_log(log_path)
-
-        previous_time = world.get_snapshot().timestamp.elapsed_seconds
+        # Start time at 0 for the speed CSV
+        snapshot = world.get_snapshot()
+        t0 = snapshot.timestamp.elapsed_seconds
+        previous_time = t0
 
         print("\nCONTROL INICIADO")
         print(f"Trayectoria: {args.trajectory}")
@@ -528,6 +517,7 @@ def game_loop(args):
         while visualizer.running:
             snapshot = world.get_snapshot()
             current_time = snapshot.timestamp.elapsed_seconds
+            rel_time = current_time - t0
 
             dt = min(current_time - previous_time, 0.1) if current_time > previous_time else 1.0 / CONTROL_HZ
             previous_time = current_time
@@ -543,14 +533,14 @@ def game_loop(args):
             target_index = tracker.get_target_index(nearest_index, lookahead)
             target = trajectory[target_index]
 
-            # ------------------------------------------------
+            # =================================================
             # SIMPLE P STEERING
-            # ------------------------------------------------
+            # =================================================
             steer, angle_error = tracker.calculate_steering(vehicle, target_index)
 
-            # ------------------------------------------------
+            # =================================================
             # SPEED CONTROL
-            # ------------------------------------------------
+            # =================================================
             target_speed = max(0.0, target["vx"])
             throttle, brake, speed = tracker.calculate_speed_control(vehicle, target_speed, dt)
 
@@ -560,29 +550,11 @@ def game_loop(args):
 
             vehicle.apply_control(control)
 
-            # ------------------------------------------------
-            # LOGGING
-            # ------------------------------------------------
-            yaw = math.radians(transform.rotation.yaw)
+            # =================================================
+            # SPEED CSV LOGGING
+            # =================================================
+            csv_writer.writerow([f"{rel_time:.6f}", f"{speed:.6f}"])
 
-            log_writer.writerow([
-                f"{current_time:.6f}",
-                f"{x:.6f}",
-                f"{y:.6f}",
-                f"{yaw:.6f}",
-                f"{speed:.6f}",
-                f"{target_speed:.6f}",
-                nearest_index,
-                f"{nearest_distance:.6f}",
-                f"{angle_error:.6f}",
-                f"{steer:.6f}",
-                f"{throttle:.6f}",
-                f"{brake:.6f}"
-            ])
-
-            # ------------------------------------------------
-            # VISUALIZATION
-            # ------------------------------------------------
             visualizer.update(
                 target,
                 {
@@ -610,6 +582,9 @@ def game_loop(args):
         print("\n\n[STOP] Interrumpido.")
 
     finally:
+        # ====================================================
+        # STOP VEHICLE
+        # ====================================================
         if vehicle is not None:
             try:
                 control = carla.VehicleControl()
@@ -626,11 +601,25 @@ def game_loop(args):
             except Exception as e:
                 print(f"[VEHICLE] Error: {e}")
 
-        if log_file is not None:
-            log_file.flush()
-            log_file.close()
-            print(f"[LOG] Guardado en {log_path}")
+        # ====================================================
+        # STOP CARLA RECORDER
+        # ====================================================
+        try:
+            client.stop_recorder()
+            print(f"[RECORDER] Guardado en {log_filename}")
+        except Exception as e:
+            print(f"[RECORDER] Error al detener recorder: {e}")
 
+        # ====================================================
+        # CLOSE SPEED CSV
+        # ====================================================
+        csv_fh.flush()
+        csv_fh.close()
+        print(f"[LOG] Velocidad guardada en {log_path}/data.csv")
+
+        # ====================================================
+        # DESTROY CAMERAS
+        # ====================================================
         if visualizer is not None:
             visualizer.destroy()
 
