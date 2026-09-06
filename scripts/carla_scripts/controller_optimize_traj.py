@@ -18,7 +18,7 @@ DISPLAY_WIDTH, DISPLAY_HEIGHT = 1280, 720
 # ============================================================
 # STEERING CONTROLLER
 # ============================================================
-STEERING_KP = 1.5
+STEERING_KP = 2.5
 MAX_STEER = 1.0
 
 # ============================================================
@@ -47,19 +47,19 @@ ALIGN_ROTATION_DEG, ALIGN_MIRROR_X, ALIGN_MIRROR_Y, ALIGN_OFFSET_X, ALIGN_OFFSET
 # ============================================================
 # LOOKAHEAD
 # ============================================================
-LOOKAHEAD_MIN = 3.0
+LOOKAHEAD_MIN = 1.0
 LOOKAHEAD_SPEED_GAIN = 0.30
-LOOKAHEAD_MAX = 8.0
+LOOKAHEAD_MAX = 4.0
 
 # ============================================================
 # SPEED CONTROLLER
 # ============================================================
-SPEED_KP = 0.25
+SPEED_KP = 0.35
 SPEED_KI = 0.02
 SPEED_KD = 0.02
 MAX_THROTTLE = 1.0
 MAX_BRAKE = 1.0
-SPEED_BRAKE_THRESHOLD = 0.5
+SPEED_BRAKE_THRESHOLD = 2.5
 
 # ============================================================
 # TOP CAMERA
@@ -148,10 +148,10 @@ class TrajectoryTracker:
     # ========================================================
     # FIND NEAREST POINT IN FRONT OF THE KART
     # ========================================================
-    def find_nearest_index(self, x, y):
+    def find_nearest_index(self, x, y, kart_yaw):
         best_index, best_distance = self.current_index, float("inf")
 
-        for offset in range(-5, 31):
+        for offset in range(-5, 200):
             idx = (self.current_index + offset) % self.n
             p = self.trajectory[idx]
             d = distance_xy(x, y, p["x"], p["y"])
@@ -524,8 +524,9 @@ def game_loop(args):
 
             transform = vehicle.get_transform()
             x, y = transform.location.x, transform.location.y
+            yaw = transform.rotation.yaw
 
-            nearest_index, nearest_distance = tracker.find_nearest_index(x, y)
+            nearest_index, nearest_distance = tracker.find_nearest_index(x, y, yaw)
 
             speed = get_vehicle_speed(vehicle)
             lookahead = float(np.clip(LOOKAHEAD_MIN + LOOKAHEAD_SPEED_GAIN * speed, LOOKAHEAD_MIN, LOOKAHEAD_MAX))
@@ -633,14 +634,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="../TUMFTM/Output/Track_8_trayectory_opt.csv"
+        default="../TUMFTM/Output/Track_4_trayectory_opt.csv"
     )
 
     parser.add_argument(
         "--town",
         "--carla-town",
         type=str,
-        default="Track8"
+        default="Track4"
     )
 
     parser.add_argument(
