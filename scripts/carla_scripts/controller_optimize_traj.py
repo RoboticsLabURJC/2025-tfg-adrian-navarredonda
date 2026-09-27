@@ -16,6 +16,14 @@ CONTROL_HZ = 30.0
 DISPLAY_WIDTH, DISPLAY_HEIGHT = 1280, 720
 
 # ============================================================
+# CORRECCION GEOMETRIA DEL KART
+# ============================================================
+# El origen (0,0) del actor no esta centrado en la anchura del kart:
+# el cuerpo se genera hacia la izquierda del origen. 
+KART_WIDTH_M = 0.64
+KART_CENTER_OFFSET_M = KART_WIDTH_M / 2.0  # 0.32 m
+
+# ============================================================
 # STEERING CONTROLLER
 # ============================================================
 STEERING_KP = 2.5
@@ -73,6 +81,22 @@ TOP_CAMERA_FOV = 90.0
 KART_CAMERA_FOV = 100.0
 
 
+def get_kart_center(vehicle):
+    """
+    Centro real del kart en coordenadas de mundo, corrigiendo el
+    desplazamiento lateral del origen del actor.
+
+    Si tras probarlo el kart se va hacia el lado contrario al esperado,
+    cambia el signo (usa -right.x, -right.y) en vez de invertir la constante.
+    """
+    transform = vehicle.get_transform()
+    right = transform.get_right_vector()  # ya normalizado, en coords de mundo
+
+    x = transform.location.x - right.x * 0.70
+    y = transform.location.y - right.y * 0.70
+
+    return x, y
+
 # ============================================================
 # UTILITIES
 # ============================================================
@@ -112,7 +136,7 @@ def load_trajectory(filename):
             except ValueError:
                 continue
 
-            x, y, psi = align_point(x, y, psi)
+            #x, y, psi = align_point(x, y, psi)
             trajectory.append({"s": s, "x": x, "y": y, "psi": psi, "kappa": kappa, "vx": vx, "ax": ax})
 
     if len(trajectory) < 3:
@@ -180,9 +204,8 @@ class TrajectoryTracker:
     # SIMPLE P STEERING
     # ========================================================
     def calculate_steering(self, vehicle, target_index):
-        transform = vehicle.get_transform()
-        kart_x, kart_y = transform.location.x, transform.location.y
-        kart_yaw = math.radians(transform.rotation.yaw)
+        kart_x, kart_y = get_kart_center(vehicle)
+        kart_yaw = math.radians(vehicle.get_transform().rotation.yaw)
 
         target = self.trajectory[target_index]
 
@@ -339,6 +362,44 @@ class TrajectoryVisualizer:
         return int(round(pixel_x)), int(round(pixel_y))
 
     # ========================================================
+    # WORLD -> KART CAMERA
+    # ========================================================
+    def world_to_kart(self, x, y, z=0.0):
+        camera_transform = self.kart_camera.get_transform()
+        point_camera = camera_transform.inverse_transform(carla.Location(x=x, y=y, z=z))
+
+        depth = point_camera.x
+        if depth <= 0.001:
+            return None  # detrás de la cámara
+
+        fx = self.top_width / (2.0 * math.tan(math.radians(KART_CAMERA_FOV) / 2.0))
+        fy = fx
+
+        cx = self.top_width / 2.0
+        cy = self.top_height / 2.0
+
+        pixel_x = cx + fx * (point_camera.y / depth)
+        pixel_y = cy - fy * (point_camera.z / depth)
+
+        return int(round(pixel_x)), int(round(pixel_y))
+
+    def draw_kart_overlay(self, target):
+        offset_x = DISPLAY_WIDTH // 2
+
+        for p in self.trajectory:
+            point = self.world_to_kart(p["x"], p["y"], 0.0)
+            if point is not None:
+                px, py = point
+                if 0 <= px < self.top_width and 0 <= py < self.top_height:
+                    pygame.draw.circle(self.display, (0, 255, 0), (px + offset_x, py), 3)
+
+        target_point = self.world_to_kart(target["x"], target["y"], 0.0)
+        if target_point is not None:
+            tx, ty = target_point
+            if 0 <= tx < self.top_width and 0 <= ty < self.top_height:
+                pygame.draw.circle(self.display, (255, 255, 0), (tx + offset_x, ty), 7)
+
+    # ========================================================
     # DRAW TOP OVERLAY
     # ========================================================
     def draw_top_overlay(self, target):
@@ -349,7 +410,8 @@ class TrajectoryVisualizer:
                 pygame.draw.circle(self.display, (0, 255, 0), point, 2)
 
         vt = self.vehicle.get_transform()
-        kart_point = self.world_to_top(vt.location.x, vt.location.y, vt.location.z)
+        x, y = get_kart_center(self.vehicle)
+        kart_point = self.world_to_top(x, y, vt.location.z)
 
         if kart_point is not None:
             x, y = kart_point
@@ -388,15 +450,21 @@ class TrajectoryVisualizer:
 
         self.display.fill((0, 0, 0))
 
+        # Draw trayectory in top image
         if self.top_image is not None:
             img = pygame.surfarray.make_surface(self.top_image.swapaxes(0, 1))
             self.display.blit(img, (0, 0))
-
         self.draw_top_overlay(target)
 
+        # Draw trayectory in kart image
         if self.kart_image is not None:
             img = pygame.surfarray.make_surface(self.kart_image.swapaxes(0, 1))
             self.display.blit(img, (DISPLAY_WIDTH // 2, 0))
+        self.draw_kart_overlay(target)
+
+        # if self.kart_image is not None:
+        #     img = pygame.surfarray.make_surface(self.kart_image.swapaxes(0, 1))
+        #     self.display.blit(img, (DISPLAY_WIDTH // 2, 0))
 
         pygame.draw.line(self.display, (255, 255, 255), (DISPLAY_WIDTH // 2, 0), (DISPLAY_WIDTH // 2, DISPLAY_HEIGHT), 2)
 
@@ -523,7 +591,7 @@ def game_loop(args):
             previous_time = current_time
 
             transform = vehicle.get_transform()
-            x, y = transform.location.x, transform.location.y
+            x, y = get_kart_center(vehicle)
             yaw = transform.rotation.yaw
 
             nearest_index, nearest_distance = tracker.find_nearest_index(x, y, yaw)
@@ -634,14 +702,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="../TUMFTM/Output/Track_4_trayectory_opt.csv"
+        default="../TUMFTM/Output/Track_6_trayectory_opt.csv"
     )
 
     parser.add_argument(
         "--town",
         "--carla-town",
         type=str,
-        default="Track4"
+        default="Track6"
     )
 
     parser.add_argument(
