@@ -45,8 +45,8 @@ import sys
 
 # ================= MODEL =================
 MODEL_PATH = "../../yolo_model/runs/detect/Run_con_parametros/weights/best.pt"
-device = "cuda:1"
-model = YOLO(MODEL_PATH).to()
+device = "cuda:0"
+model = YOLO(MODEL_PATH).to(device)
 
 # ================= CONFIG =================
 WIDTH, HEIGHT = 1000, 800
