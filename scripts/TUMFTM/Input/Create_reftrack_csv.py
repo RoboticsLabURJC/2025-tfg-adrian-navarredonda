@@ -1,102 +1,163 @@
-"""
-Convierte el CSV de conos (ID,color,x,y,z,ScaleX,ScaleY,ScaleZ) que usa el
-Blueprint de colocacion en un reftrack.csv valido para
-TUMFTM/global_racetrajectory_optimization: [x_m, y_m, w_tr_right_m, w_tr_left_m]
 
-No resamplea ni suaviza la linea: el propio main_globaltraj.py ya hace
-interpolacion/spline regression internamente (prep_track.py), asi que aqui
-solo generamos los puntos ordenados y emparejados, con espaciado irregular
-si hace falta.
+#!/usr/bin/env python3
+"""
+Convert a CARLA cone CSV into a TUMFTM reftrack.csv:
+[x_m, y_m, w_tr_right_m, w_tr_left_m].
+
+Blue, yellow and large orange cones contribute to the track boundaries.
+Coordinates are converted from cm to m when CM_TO_M=True.
 """
 
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# --- CONFIG: ajusta esto a tu CSV -----------------------------------------
-INPUT_CSV = "../../Carla_uassets/maps/map_csvs/track1random_track.csv"
-OUTPUT_CSV = "reftrack.csv"
-COLOR_LEFT = "blue"      # valor exacto de la columna 'color' para el lado izquierdo
-COLOR_RIGHT = "yellow"   # valor exacto de la columna 'color' para el lado derecho
-PLOT = True              # pon a False para no mostrar la grafica de verificacion
-CM_TO_M = True           # True si el CSV de conos viene en centimetros (unidad nativa de Unreal/CARLA)
-# ---------------------------------------------------------------------------
+# --- CONFIG ---------------------------------------------------------------
+INPUT_CSV = "../../../Carla_uassets/maps/modify_tracks/track1_modify.csv"
+OUTPUT_CSV = "reftrack_1.csv"
+COLOR_LEFT = "blue"
+COLOR_RIGHT = "yellow"
+PLOT = True
+CM_TO_M = True
+DEDUP_TOL = 0.02  # Minimum distance between duplicate boundary points, in metres
+# -------------------------------------------------------------------------
 
 
 def order_loop(points: np.ndarray) -> np.ndarray:
-    """Ordena un conjunto de puntos 2D en un lazo cerrado por vecino mas cercano.
+    """Order boundary points using nearest-neighbour traversal."""
+    points = np.asarray(points, dtype=float)
+    if len(points) < 3:
+        raise ValueError("Each boundary must contain at least 3 points.")
 
-    Limitacion conocida: si hay huecos grandes e irregulares entre conos,
-    la cadena de vecino mas cercano puede "saltar" por el hueco. Revisa
-    la grafica de verificacion antes de fiarte del resultado.
-    """
-    remaining = list(range(len(points)))
-    order = [remaining.pop(0)]
+    # Remove near-duplicate points to avoid zero-length jumps.
+    unique = [points[0]]
+    for p in points[1:]:
+        if min(np.linalg.norm(p - q) for q in unique) > DEDUP_TOL:
+            unique.append(p)
+    points = np.asarray(unique)
+
+    if len(points) < 3:
+        raise ValueError("Too few unique points remain on a boundary.")
+
+    remaining = list(range(1, len(points)))
+    order = [0]
     while remaining:
         last = points[order[-1]]
-        dists = [np.hypot(*(points[i] - last)) for i in remaining]
-        nxt = remaining[int(np.argmin(dists))]
-        order.append(nxt)
-        remaining.remove(nxt)
+        distances = np.linalg.norm(points[remaining] - last, axis=1)
+        j = int(np.argmin(distances))
+        order.append(remaining.pop(j))
+
     return points[order]
 
 
+def nearest_distances(points, reference):
+    """Distance from each point to its nearest point in a reference boundary."""
+    return np.linalg.norm(points[:, None, :] - reference[None, :, :], axis=2).min(axis=1)
+
+
 def main():
-    df = pd.read_csv(INPUT_CSV)
+    input_path = Path(INPUT_CSV)
+    if not input_path.is_file():
+        raise FileNotFoundError(f"Input CSV not found: {input_path.resolve()}")
 
-    print("Valores de color encontrados:", df["color"].unique())
+    df = pd.read_csv(input_path)
+    required = {"color", "x", "y"}
+    if not required.issubset(df.columns):
+        raise ValueError(f"Missing CSV columns: {sorted(required - set(df.columns))}")
 
-    left = df[df["color"] == COLOR_LEFT][["x", "y"]].to_numpy()
-    right = df[df["color"] == COLOR_RIGHT][["x", "y"]].to_numpy()
+    colors = df["color"].astype(str).str.strip().str.lower()
+    print("Colors found:", df["color"].unique())
+
+    blue = df.loc[colors == COLOR_LEFT, ["x", "y"]].to_numpy(dtype=float)
+    yellow = df.loc[colors == COLOR_RIGHT, ["x", "y"]].to_numpy(dtype=float)
+    orange_mask = colors.str.contains("orange", na=False)
+    orange = df.loc[orange_mask, ["x", "y"]].to_numpy(dtype=float)
 
     if CM_TO_M:
-        left = left / 100.0
-        right = right / 100.0
+        blue, yellow, orange = blue / 100.0, yellow / 100.0, orange / 100.0
 
-    print(f"Conos izquierda: {len(left)}, conos derecha: {len(right)}")
-
-    if len(left) == 0 or len(right) == 0:
+    if len(blue) < 3 or len(yellow) < 3:
         raise ValueError(
-            "No se ha encontrado ningun cono para uno de los dos lados: "
-            "revisa COLOR_LEFT / COLOR_RIGHT contra los valores impresos arriba."
+            f"Need at least 3 blue and yellow cones; found blue={len(blue)}, yellow={len(yellow)}. "
+            f"Check COLOR_LEFT/COLOR_RIGHT against the printed colors."
         )
 
-    # ordena solo el lado izquierdo a lo largo del circuito
-    left_ordered = order_loop(left)
+    # Assign each orange cone to the nearest original boundary.
+    if len(orange):
+        d_blue = nearest_distances(orange, blue)
+        d_yellow = nearest_distances(orange, yellow)
+        orange_left = orange[d_blue <= d_yellow]
+        orange_right = orange[d_blue > d_yellow]
+        blue_all = np.vstack((blue, orange_left))
+        yellow_all = np.vstack((yellow, orange_right))
+    else:
+        orange_left = orange_right = np.empty((0, 2))
+        blue_all, yellow_all = blue.copy(), yellow.copy()
 
-    # para cada punto ya ordenado de la izquierda, busca el cono derecho mas
-    # cercano en el espacio (evita el problema de que las dos cadenas de
-    # vecino mas cercano vayan en sentidos o puntos de partida distintos)
-    right_matched = np.array(
-        [right[np.argmin(np.hypot(*(right - p).T))] for p in left_ordered]
-    )
+    print(f"Blue boundary cones: {len(blue)}")
+    print(f"Yellow boundary cones: {len(yellow)}")
+    print(f"Orange cones assigned to blue boundary: {len(orange_left)}")
+    print(f"Orange cones assigned to yellow boundary: {len(orange_right)}")
+
+    # Include the orange cones as actual boundary points.
+    left_ordered = order_loop(blue_all)
+    right_ordered = order_loop(yellow_all)
+
+    # Match each left-boundary point to the nearest right-boundary point.
+    right_matched = right_ordered[
+        np.argmin(
+            np.linalg.norm(left_ordered[:, None, :] - right_ordered[None, :, :], axis=2),
+            axis=1
+        )
+    ]
 
     centerline = (left_ordered + right_matched) / 2.0
-    w_tr_left = np.hypot(*(left_ordered - centerline).T)
-    w_tr_right = np.hypot(*(right_matched - centerline).T)
+    distances_left = np.linalg.norm(left_ordered - centerline, axis=1)
+    distances_right = np.linalg.norm(right_matched - centerline, axis=1)
 
-    reftrack = np.column_stack(
-        [centerline[:, 0], centerline[:, 1], w_tr_right, w_tr_left]
-    )
+    # TUMFTM expects right width first, then left width.
+    reftrack = np.column_stack((
+        centerline[:, 0], centerline[:, 1], distances_right, distances_left
+    ))
 
     np.savetxt(
-        OUTPUT_CSV,
-        reftrack,
-        delimiter=",",
+        OUTPUT_CSV, reftrack, delimiter=",",
         header="x_m,y_m,w_tr_right_m,w_tr_left_m",
-        comments="# ",
-        fmt="%.4f",
+        comments="# ", fmt="%.4f"
     )
-    print(f"Guardado {OUTPUT_CSV} con {len(reftrack)} puntos")
+    print(f"Saved {OUTPUT_CSV}: {len(reftrack)} reference points")
 
     if PLOT:
         import matplotlib.pyplot as plt
 
-        plt.plot(left[:, 0], left[:, 1], "o", color="tab:blue", label="conos izquierda")
-        plt.plot(right[:, 0], right[:, 1], "o", color="tab:orange", label="conos derecha")
-        plt.plot(centerline[:, 0], centerline[:, 1], "-", color="black", label="centerline")
-        plt.axis("equal")
-        plt.legend()
-        plt.title("Verificacion visual del reftrack generado")
+        fig, ax = plt.subplots(figsize=(12, 10))
+        ax.plot(blue[:, 0], blue[:, 1], "o", color="tab:blue",
+                markersize=4, label="Blue cones")
+        ax.plot(yellow[:, 0], yellow[:, 1], "o", color="gold",
+                markersize=4, label="Yellow cones")
+        if len(orange):
+            ax.scatter(orange[:, 0], orange[:, 1], marker="s", s=75,
+                       facecolors="none", edgecolors="red", label="Original orange cones")
+        if len(orange_left):
+            ax.scatter(orange_left[:, 0], orange_left[:, 1], marker="s",
+                       s=45, color="deepskyblue", label="Orange assigned to blue")
+        if len(orange_right):
+            ax.scatter(orange_right[:, 0], orange_right[:, 1], marker="s",
+                       s=45, color="darkorange", label="Orange assigned to yellow")
+
+        ax.plot(left_ordered[:, 0], left_ordered[:, 1], "--",
+                color="blue", alpha=0.65, label="Ordered blue boundary")
+        ax.plot(right_ordered[:, 0], right_ordered[:, 1], "--",
+                color="orange", alpha=0.65, label="Ordered yellow boundary")
+        ax.plot(centerline[:, 0], centerline[:, 1], "-k",
+                linewidth=1.2, label="Generated centerline")
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+        ax.set_title("Reftrack verification, including orange cones")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
         plt.show()
 
 
