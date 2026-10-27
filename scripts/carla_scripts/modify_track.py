@@ -76,7 +76,7 @@ def main():
     )
     parser.add_argument("--input", default="track1random_track.csv", help="Input CSV file.")
     parser.add_argument("--output", default="track_modified.csv", help="Output CSV file.")
-    parser.add_argument("--width", type=float, default=300.0, help="Distance between blue and yellow rows, in cm.")
+    parser.add_argument("--width", type=float, default=400.0, help="Distance between blue and yellow rows, in cm.")
     parser.add_argument("--spacing", type=float, default=800.0, help="Target distance between cones, in cm.")
     parser.add_argument("--plot", default="track_comparison.png", help="Output comparison plot.")
     args = parser.parse_args()
