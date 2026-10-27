@@ -23,6 +23,29 @@ DISPLAY_WIDTH, DISPLAY_HEIGHT = 1280, 720
 KART_WIDTH_M = 0.64
 KART_CENTER_OFFSET_M = KART_WIDTH_M / 2.0  # 0.32 m
 
+# Desplazamiento lateral real usado por get_kart_center() (hacia la izquierda
+# del vector "right"). Se usa tambien al hacer spawn para que el CENTRO del
+# kart caiga justo sobre el punto de la trayectoria.
+KART_ORIGIN_OFFSET_M = 0.70
+
+# ============================================================
+# SPAWN POINTS
+# ============================================================
+# Se eligen NUM_SPAWN_POINTS puntos repartidos por la vuelta (uno por tramo,
+# con posicion aleatoria dentro del tramo) y se generan dos spawns por punto:
+# sentido normal y sentido inverso -> 2 * NUM_SPAWN_POINTS spawns en total.
+# La semilla es el nombre del mapa, asi que los puntos son siempre los mismos
+# para un mismo circuito.
+NUM_SPAWN_POINTS = 5
+SPAWN_HEADING_LOOKAHEAD_PTS = 3   # puntos hacia delante para calcular la orientacion
+SPAWN_Z_OFFSET = 0.3              # m sobre el suelo
+SPAWN_FALLBACK_Z = 0.5            # m, si no se puede proyectar al suelo
+
+# En sentido inverso se recorre la misma trayectoria al reves, pero el perfil
+# de velocidad (vx) fue calculado para el sentido normal: las frenadas quedan
+# donde no tocan. Se reduce para compensarlo.
+REVERSE_SPEED_SCALE = 0.8
+
 # ============================================================
 # STEERING CONTROLLER
 # ============================================================
@@ -72,7 +95,7 @@ SPEED_BRAKE_THRESHOLD = 2.5
 # ============================================================
 # TOP CAMERA
 # ============================================================
-TOP_CAMERA_HEIGHT = 80.0
+TOP_CAMERA_HEIGHT = 40.0
 TOP_CAMERA_FOV = 90.0
 
 # ============================================================
@@ -80,6 +103,33 @@ TOP_CAMERA_FOV = 90.0
 # ============================================================
 KART_CAMERA_FOV = 100.0
 
+def debug_world_actors(world):
+    actors = world.get_actors()
+    print(f"\n[DEBUG] Total de actores detectados por CARLA: {len(actors)}")
+
+    type_counts = {}
+    for actor in actors:
+        type_id = actor.type_id
+        type_counts[type_id] = type_counts.get(type_id, 0) + 1
+
+    print("\n[DEBUG] Tipos de actores presentes en el mundo:")
+    for type_id, count in sorted(type_counts.items()):
+        print(f"  {type_id}: {count}")
+
+    print("\n[DEBUG] Actores cuyo tipo o atributos podrían corresponder a conos:")
+    keywords = ("cone", "cono", "blue", "yellow", "orange", "azul", "amarillo", "naranja", "prop")
+
+    matches = 0
+    for actor in actors:
+        attributes = getattr(actor, "attributes", {})
+        description = f"{actor.type_id} {attributes}".lower()
+
+        if any(keyword in description for keyword in keywords):
+            location = actor.get_location()
+            print(f"  ID={actor.id} | tipo={actor.type_id} | posición=({location.x:.2f}, {location.y:.2f}, {location.z:.2f}) | atributos={attributes}")
+            matches += 1
+
+    print(f"\n[DEBUG] Actores coincidentes: {matches}")
 
 def get_kart_center(vehicle):
     """
@@ -92,8 +142,8 @@ def get_kart_center(vehicle):
     transform = vehicle.get_transform()
     right = transform.get_right_vector()  # ya normalizado, en coords de mundo
 
-    x = transform.location.x - right.x * 0.70
-    y = transform.location.y - right.y * 0.70
+    x = transform.location.x - right.x * KART_ORIGIN_OFFSET_M
+    y = transform.location.y - right.y * KART_ORIGIN_OFFSET_M
 
     return x, y
 
@@ -158,6 +208,68 @@ def get_vehicle_speed(vehicle):
 
 
 # ============================================================
+# SPAWN POINTS (calculados a partir de la trayectoria)
+# ============================================================
+def compute_spawn_candidates(trajectory, num_points, seed):
+    """
+    Devuelve 2*num_points spawns sobre la trayectoria:
+      - los primeros num_points en el sentido normal,
+      - los siguientes num_points en las MISMAS posiciones pero girados 180°
+        (sentido inverso). El spawn k y el k+num_points comparten posicion.
+
+    La orientacion (yaw, en grados CARLA) sale de la tangente de la propia
+    trayectoria, en el mismo sistema de coordenadas que usa el controlador.
+    """
+    n = len(trajectory)
+    rng = random.Random(seed)
+    segment = n / num_points
+    margin = int(segment * 0.2)  # evita puntos pegados al borde de cada tramo
+
+    indices = []
+    for k in range(num_points):
+        lo = int(k * segment) + margin
+        hi = max(lo, int((k + 1) * segment) - 1 - margin)
+        indices.append(rng.randint(lo, hi) % n)
+
+    forward, reverse = [], []
+    for idx in indices:
+        p0 = trajectory[idx]
+        p1 = trajectory[(idx + SPAWN_HEADING_LOOKAHEAD_PTS) % n]
+        yaw = math.degrees(math.atan2(p1["y"] - p0["y"], p1["x"] - p0["x"]))
+        yaw_rev = math.degrees(normalize_angle(math.radians(yaw + 180.0)))
+
+        forward.append({"index": idx, "x": p0["x"], "y": p0["y"], "yaw": yaw, "reverse": False})
+        reverse.append({"index": idx, "x": p0["x"], "y": p0["y"], "yaw": yaw_rev, "reverse": True})
+
+    return forward + reverse
+
+
+def reverse_trajectory(trajectory):
+    """Misma trayectoria recorrida al reves (para los spawns en sentido inverso)."""
+    return [
+        dict(
+            p,
+            psi=normalize_angle(p["psi"] + math.pi),
+            kappa=-p["kappa"],
+            vx=p["vx"] * REVERSE_SPEED_SCALE,
+        )
+        for p in reversed(trajectory)
+    ]
+
+
+def get_ground_z(world, x, y):
+    """Altura del suelo en (x, y) si la version de CARLA lo permite."""
+    if hasattr(world, "ground_projection"):
+        try:
+            hit = world.ground_projection(carla.Location(x=x, y=y, z=50.0), 100.0)
+            if hit is not None:
+                return hit.location.z
+        except Exception:
+            pass
+    return SPAWN_FALLBACK_Z - SPAWN_Z_OFFSET
+
+
+# ============================================================
 # TRAJECTORY TRACKER
 # ============================================================
 class TrajectoryTracker:
@@ -168,6 +280,15 @@ class TrajectoryTracker:
         self.current_index = 0
         self.speed_integral = 0.0
         self.previous_speed_error = 0.0
+
+    # ========================================================
+    # START AT THE POINT CLOSEST TO THE KART (ANY PLACE IN THE LAP)
+    # ========================================================
+    def reset_to_nearest(self, x, y):
+        self.current_index = min(
+            range(self.n),
+            key=lambda i: distance_xy(x, y, self.trajectory[i]["x"], self.trajectory[i]["y"])
+        )
 
     # ========================================================
     # FIND NEAREST POINT IN FRONT OF THE KART
@@ -509,16 +630,46 @@ class TrajectoryVisualizer:
 # ============================================================
 # SPAWN KART
 # ============================================================
-def spawn_kart(world):
+def spawn_kart(world, spawn):
+    """
+    Crea el kart de modo que su CENTRO (no el origen del actor) quede sobre
+    el punto `spawn` de la trayectoria, mirando en la direccion `spawn["yaw"]`.
+    """
     bp = world.get_blueprint_library().find(VEHICLE_MODEL)
-    spawn = random.choice(world.get_map().get_spawn_points())
 
-    vehicle = world.try_spawn_actor(bp, spawn)
+    yaw = spawn["yaw"]
+    yaw_rad = math.radians(yaw)
+
+    # vector "right" del kart para ese yaw; el origen del actor esta
+    # desplazado KART_ORIGIN_OFFSET_M hacia ese lado respecto al centro.
+    right_x, right_y = -math.sin(yaw_rad), math.cos(yaw_rad)
+    origin_x = spawn["x"] + right_x * KART_ORIGIN_OFFSET_M
+    origin_y = spawn["y"] + right_y * KART_ORIGIN_OFFSET_M
+    origin_z = get_ground_z(world, origin_x, origin_y) + SPAWN_Z_OFFSET
+
+    transform = carla.Transform(
+        carla.Location(x=origin_x, y=origin_y, z=origin_z),
+        carla.Rotation(yaw=yaw)
+    )
+
+    vehicle = world.try_spawn_actor(bp, transform)
 
     if vehicle is None:
-        raise RuntimeError("No se pudo crear el kart.")
+        raise RuntimeError(
+            f"No se pudo crear el kart en {transform}. Hay algo ocupando ese punto "
+            f"(cono, otro actor) o esta fuera del suelo. Prueba con otro --spawn."
+        )
 
-    print(f"[VEHICLE] spawn={spawn}")
+    box = vehicle.bounding_box
+    print(f"\nKart ID: {vehicle.id} | Blueprint: {vehicle.type_id}")
+    print(f"Largo:  {2 * box.extent.x:.3f} m")
+    print(f"Ancho:  {2 * box.extent.y:.3f} m")
+    print(f"Alto:   {2 * box.extent.z:.3f} m")
+    print(f"Escala del actor: {vehicle.get_transform()}")
+
+    debug_world_actors(world)
+
+    print(f"[VEHICLE] spawn={transform}")
     return vehicle
 
 
@@ -536,6 +687,30 @@ def game_loop(args):
     if args.town:
         print(f"[CARLA] Cargando mapa {args.town}")
         world = client.load_world(args.town)
+
+    # ========================================================
+    # SPAWN POINTS (5 puntos del circuito + los mismos 5 al reves)
+    # ========================================================
+    candidates = compute_spawn_candidates(trajectory, NUM_SPAWN_POINTS, seed=args.town)
+
+    print(f"\n[SPAWN] {len(candidates)} spawns disponibles ({NUM_SPAWN_POINTS} puntos x 2 sentidos):")
+    for i, c in enumerate(candidates):
+        way = "INVERSO" if c["reverse"] else "normal "
+        print(f"  [{i}] {way} idx={c['index']:4d} x={c['x']:8.2f} y={c['y']:8.2f} yaw={c['yaw']:+7.1f}°")
+
+    if args.spawn is None:
+        spawn_id = random.randrange(len(candidates))
+    else:
+        if not 0 <= args.spawn < len(candidates):
+            raise ValueError(f"--spawn debe estar entre 0 y {len(candidates) - 1}")
+        spawn_id = args.spawn
+
+    spawn = candidates[spawn_id]
+    print(f"[SPAWN] Elegido: {spawn_id} ({'sentido inverso' if spawn['reverse'] else 'sentido normal'})")
+
+    # En sentido inverso el kart sigue la trayectoria recorrida al reves
+    if spawn["reverse"]:
+        trajectory = reverse_trajectory(trajectory)
 
     # ========================================================
     # LOG DIRECTORY
@@ -559,10 +734,11 @@ def game_loop(args):
     visualizer = None
 
     try:
-        vehicle = spawn_kart(world)
+        vehicle = spawn_kart(world, spawn)
         time.sleep(1.0)
 
         tracker = TrajectoryTracker(trajectory)
+        tracker.reset_to_nearest(*get_kart_center(vehicle))
         visualizer = TrajectoryVisualizer(world, vehicle, trajectory)
 
         control = carla.VehicleControl()
@@ -702,14 +878,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="../TUMFTM/Output/Track_6_trayectory_opt.csv"
+        default="../TUMFTM/Output/Track9/Track_9_trayectory_opt.csv"
     )
 
     parser.add_argument(
         "--town",
         "--carla-town",
         type=str,
-        default="Track6"
+        default="Track9"
     )
 
     parser.add_argument(
@@ -723,6 +899,14 @@ if __name__ == "__main__":
         "--log_path",
         type=str,
         default=os.getcwd() + "/logs/"
+    )
+
+    parser.add_argument(
+        "--spawn",
+        type=int,
+        default=None,
+        help="Indice de spawn (0-4 sentido normal, 5-9 los mismos puntos en sentido inverso). "
+             "Si se omite, se elige uno al azar."
     )
 
     args = parser.parse_args()
