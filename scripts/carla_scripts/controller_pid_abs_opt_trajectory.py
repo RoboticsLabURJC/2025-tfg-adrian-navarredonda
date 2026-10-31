@@ -878,14 +878,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="../TUMFTM/Output/Track9/Track_9_trayectory_opt.csv"
+        default="../TUMFTM/Output/Track2/Track_2_trayectory_opt.csv"
     )
 
     parser.add_argument(
         "--town",
         "--carla-town",
         type=str,
-        default="Track9"
+        default="Track2"
     )
 
     parser.add_argument(
