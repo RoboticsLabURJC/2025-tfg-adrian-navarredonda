@@ -8,6 +8,12 @@ import numpy as np
 import pygame
 import random
 
+try:
+    from scipy.interpolate import splprep, splev
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+
 # ============================================================
 # CONFIG
 # ============================================================
@@ -18,15 +24,28 @@ DISPLAY_WIDTH, DISPLAY_HEIGHT = 1280, 720
 # ============================================================
 # CORRECCION GEOMETRIA DEL KART
 # ============================================================
-# El origen (0,0) del actor no esta centrado en la anchura del kart:
-# el cuerpo se genera hacia la izquierda del origen. 
-KART_WIDTH_M = 0.64
-KART_CENTER_OFFSET_M = KART_WIDTH_M / 2.0  # 0.32 m
 
 # Desplazamiento lateral real usado por get_kart_center() (hacia la izquierda
 # del vector "right"). Se usa tambien al hacer spawn para que el CENTRO del
 # kart caiga justo sobre el punto de la trayectoria.
-KART_ORIGIN_OFFSET_M = 0.70
+KART_ORIGIN_OFFSET_M = 0.72 # El kart son 1.44 metros de ancho
+
+# ============================================================
+# TRAJECTORY SPLINE
+# ============================================================
+# Los puntos del CSV se unen con un spline cubico periodico (curva cerrada y
+# suave) y se remuestrea cada SPLINE_STEP_M metros. Todo el control (punto
+# objetivo, error de direccion) trabaja sobre esa curva y no sobre la
+# poligonal de los puntos originales: el objetivo se mueve de forma continua
+# y la direccion de la trayectoria no cambia a saltos en cada vertice.
+SPLINE_ENABLED = True
+SPLINE_STEP_M = 0.1
+# 0 = el spline pasa exactamente por los puntos. >0 = suavizado: el spline
+# puede separarse de los puntos hasta ~esta distancia (m) para quitar ruido.
+# Solo funciona con scipy.
+SPLINE_SMOOTHING_M = 0.0
+# Separacion (m) entre los puntos que se dibujan en pantalla
+OVERLAY_STEP_M = 0.4
 
 # ============================================================
 # SPAWN POINTS
@@ -36,15 +55,10 @@ KART_ORIGIN_OFFSET_M = 0.70
 # sentido normal y sentido inverso -> 2 * NUM_SPAWN_POINTS spawns en total.
 # La semilla es el nombre del mapa, asi que los puntos son siempre los mismos
 # para un mismo circuito.
-NUM_SPAWN_POINTS = 5
-SPAWN_HEADING_LOOKAHEAD_PTS = 3   # puntos hacia delante para calcular la orientacion
+NUM_SPAWN_POINTS = 1
+SPAWN_HEADING_LOOKAHEAD_M = 0.5   # m hacia delante para calcular la orientacion
 SPAWN_Z_OFFSET = 0.3              # m sobre el suelo
 SPAWN_FALLBACK_Z = 0.5            # m, si no se puede proyectar al suelo
-
-# En sentido inverso se recorre la misma trayectoria al reves, pero el perfil
-# de velocidad (vx) fue calculado para el sentido normal: las frenadas quedan
-# donde no tocan. Se reduce para compensarlo.
-REVERSE_SPEED_SCALE = 0.8
 
 # ============================================================
 # STEERING CONTROLLER (PID sobre el error medido EN LA IMAGEN ONBOARD)
@@ -52,15 +66,16 @@ REVERSE_SPEED_SCALE = 0.8
 # El error es el angulo entre el eje optico de la camara y el punto objetivo
 # que ve la camara, es decir atan(error_pixeles / fx). La salida se normaliza
 # con 45 deg = giro maximo, igual que antes.
-STEERING_KP = 2.5
+STEERING_KP = 2.0
 STEERING_KI = 0.0
-STEERING_KD = 0.0
+STEERING_KD = 0.1
 STEERING_INTEGRAL_LIMIT = 1.0   # rad*s, anti-windup
 MAX_STEER = 1.0
 
 # Filtro paso bajo del error de direccion (constante de tiempo en segundos).
 # Suaviza los saltos residuales al cambiar de punto objetivo. Mas alto = mas
-# suave pero con mas retardo; 0 lo desactiva.
+# suave pero con mas retardo; 0 lo desactiva. Con el spline activo se puede
+# bajar sin que el giro se vuelva nervioso.
 STEERING_ERROR_FILTER_TAU = 0.06
 
 # ============================================================
@@ -101,16 +116,16 @@ LOOKAHEAD_VISIBLE_MARGIN = 1.1
 
 # Busqueda del punto objetivo / progreso sobre la trayectoria
 TARGET_SCAN_MAX_DIST_M = 30.0   # solo se consideran puntos hasta 30 m por delante (a lo largo de la pista)
-PROGRESS_BACK_PTS = 5
-PROGRESS_AHEAD_PTS = 200
+PROGRESS_BACK_M = 1.0           # m hacia atras y hacia delante donde se busca el punto mas cercano
+PROGRESS_AHEAD_M = 20.0
 MIN_CAMERA_DEPTH = 0.1          # m, por debajo se considera "detras de la camara"
 
 # ============================================================
 # SPEED CONTROLLER
 # ============================================================
-SPEED_KP = 0.35
-SPEED_KI = 0.02
-SPEED_KD = 0.02
+SPEED_KP = 1.00
+SPEED_KI = 0.05
+SPEED_KD = 0.00
 MAX_THROTTLE = 1.0
 MAX_BRAKE = 1.0
 SPEED_BRAKE_THRESHOLD = 2.5
@@ -239,9 +254,124 @@ def distance_xy(x1, y1, x2, y2):
     return math.hypot(x2 - x1, y2 - y1)
 
 
+def path_length(trajectory):
+    """Longitud de la trayectoria cerrada (incluye el tramo que cierra la vuelta)."""
+    xs = np.array([p["x"] for p in trajectory], dtype=float)
+    ys = np.array([p["y"] for p in trajectory], dtype=float)
+    return float(np.hypot(np.roll(xs, -1) - xs, np.roll(ys, -1) - ys).sum())
+
+
 def get_vehicle_speed(vehicle):
     v = vehicle.get_velocity()
     return math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2)
+
+
+# ============================================================
+# TRAJECTORY SPLINE
+# ============================================================
+def _hermite_closed(t, P, T, t_new):
+    """
+    Spline cubico de Hermite cerrado (tangentes tipo Catmull-Rom). Solo usa
+    numpy: es el plan B cuando scipy no esta instalado. Pasa por todos los
+    puntos y tiene tangente continua.
+    """
+    n = len(t)
+    t_prev = np.roll(t, 1)
+    t_prev[0] -= T
+    t_next = np.roll(t, -1)
+    t_next[-1] += T
+    m = (np.roll(P, -1, axis=0) - np.roll(P, 1, axis=0)) / (t_next - t_prev)[:, None]
+
+    i0 = (np.searchsorted(t, t_new, side="right") - 1) % n
+    i1 = (i0 + 1) % n
+    t1 = np.where(i1 == 0, T, t[i1])
+    h = t1 - t[i0]
+    u = ((t_new - t[i0]) / h)[:, None]
+    h = h[:, None]
+
+    h00 = 2 * u ** 3 - 3 * u ** 2 + 1
+    h10 = u ** 3 - 2 * u ** 2 + u
+    h01 = -2 * u ** 3 + 3 * u ** 2
+    h11 = u ** 3 - u ** 2
+    return h00 * P[i0] + h10 * h * m[i0] + h01 * P[i1] + h11 * h * m[i1]
+
+
+def build_spline_trajectory(trajectory):
+    """
+    Ajusta un spline cerrado a los puntos de la trayectoria y lo remuestrea
+    cada SPLINE_STEP_M metros. Devuelve una lista con el mismo formato que
+    load_trajectory (s, x, y, psi, kappa, vx, ax), pero con puntos densos
+    sobre la curva suave. psi y kappa se recalculan de la propia curva.
+    """
+    n0 = len(trajectory)
+    x = np.array([p["x"] for p in trajectory], dtype=float)
+    y = np.array([p["y"] for p in trajectory], dtype=float)
+    vx = np.array([p["vx"] for p in trajectory], dtype=float)
+    ax = np.array([p["ax"] for p in trajectory], dtype=float)
+
+    # 1) quitar puntos repetidos (incluido el que repite el primero al cerrar la vuelta)
+    seg = np.hypot(np.roll(x, -1) - x, np.roll(y, -1) - y)
+    keep = seg > 1e-6
+    x, y, vx, ax = x[keep], y[keep], vx[keep], ax[keep]
+    if len(x) < 4:
+        raise RuntimeError("Hacen falta al menos 4 puntos distintos para ajustar el spline.")
+
+    # 2) parametro del spline = distancia acumulada a lo largo de la pista
+    seg = np.hypot(np.roll(x, -1) - x, np.roll(y, -1) - y)
+    t = np.concatenate(([0.0], np.cumsum(seg[:-1])))
+    T = float(seg.sum())
+
+    # 3) evaluar el spline cada SPLINE_STEP_M
+    t_new = np.arange(0.0, T, SPLINE_STEP_M)
+
+    if SCIPY_AVAILABLE:
+        # spline cubico periodico; el ultimo punto repite el primero para cerrar la curva
+        tck, _ = splprep(
+            [np.append(x, x[0]), np.append(y, y[0])],
+            u=np.append(t, T),
+            s=len(x) * SPLINE_SMOOTHING_M ** 2,
+            per=True,
+        )
+        xs, ys = splev(t_new, tck)
+        xs, ys = np.asarray(xs), np.asarray(ys)
+        method = "cubico periodico (scipy)"
+        if SPLINE_SMOOTHING_M > 0:
+            method += f", suavizado {SPLINE_SMOOTHING_M} m"
+    else:
+        if SPLINE_SMOOTHING_M > 0:
+            print("[SPLINE] AVISO: sin scipy no hay suavizado; se usa el spline que pasa por los puntos.")
+        out = _hermite_closed(t, np.column_stack((x, y)), T, t_new)
+        xs, ys = out[:, 0], out[:, 1]
+        method = "Hermite/Catmull-Rom (numpy)"
+
+    # 4) velocidad y aceleracion del CSV, interpoladas sobre la curva
+    t_ext = np.append(t, T)
+    vx_new = np.interp(t_new, t_ext, np.append(vx, vx[0]))
+    ax_new = np.interp(t_new, t_ext, np.append(ax, ax[0]))
+
+    # 5) rumbo y curvatura de la curva (diferencias centrales)
+    dx = np.roll(xs, -1) - np.roll(xs, 1)
+    dy = np.roll(ys, -1) - np.roll(ys, 1)
+    psi = np.arctan2(dy, dx)
+    span = np.hypot(dx, dy)
+    dpsi = (np.roll(psi, -1) - np.roll(psi, 1) + np.pi) % (2 * np.pi) - np.pi
+    kappa = dpsi / span
+
+    # cuanto se aleja el spline de los puntos originales (incluye la resolucion del muestreo)
+    deviation = 0.0
+    for i in range(0, len(x), 256):
+        d = np.hypot(xs[None, :] - x[i:i + 256, None], ys[None, :] - y[i:i + 256, None]).min(axis=1)
+        deviation = max(deviation, float(d.max()))
+
+    print(f"[SPLINE] {n0} puntos -> {len(t_new)} puntos (cada {SPLINE_STEP_M} m), "
+          f"longitud {T:.1f} m, {method}")
+    print(f"[SPLINE] distancia maxima de los puntos originales a la curva: {deviation:.3f} m")
+
+    return [
+        {"s": float(t_new[i]), "x": float(xs[i]), "y": float(ys[i]), "psi": float(psi[i]),
+         "kappa": float(kappa[i]), "vx": float(vx_new[i]), "ax": float(ax_new[i])}
+        for i in range(len(t_new))
+    ]
 
 
 # ============================================================
@@ -262,6 +392,9 @@ def compute_spawn_candidates(trajectory, num_points, seed):
     segment = n / num_points
     margin = int(segment * 0.2)  # evita puntos pegados al borde de cada tramo
 
+    # puntos hacia delante para medir la orientacion (depende del espaciado)
+    heading_pts = max(1, int(round(SPAWN_HEADING_LOOKAHEAD_M / (path_length(trajectory) / n))))
+
     indices = []
     for k in range(num_points):
         lo = int(k * segment) + margin
@@ -271,7 +404,7 @@ def compute_spawn_candidates(trajectory, num_points, seed):
     forward, reverse = [], []
     for idx in indices:
         p0 = trajectory[idx]
-        p1 = trajectory[(idx + SPAWN_HEADING_LOOKAHEAD_PTS) % n]
+        p1 = trajectory[(idx + heading_pts) % n]
         yaw = math.degrees(math.atan2(p1["y"] - p0["y"], p1["x"] - p0["x"]))
         yaw_rev = math.degrees(normalize_angle(math.radians(yaw + 180.0)))
 
@@ -288,7 +421,7 @@ def reverse_trajectory(trajectory):
             p,
             psi=normalize_angle(p["psi"] + math.pi),
             kappa=-p["kappa"],
-            vx=p["vx"] * REVERSE_SPEED_SCALE,
+            vx=p["vx"],
         )
         for p in reversed(trajectory)
     ]
@@ -420,6 +553,11 @@ class TrajectoryTracker:
         self.cum = np.concatenate(([0.0], np.cumsum(seg[:-1])))
         self.length = float(seg.sum())
 
+        # ventana de busqueda del punto mas cercano, en puntos (depende del espaciado)
+        step = self.length / self.n
+        self.back_pts = max(1, int(round(PROGRESS_BACK_M / step)))
+        self.ahead_pts = max(2, int(round(PROGRESS_AHEAD_M / step)))
+
         # El indice de arranque lo da el spawn: no hace falta saber donde esta
         # el kart en coordenadas absolutas.
         self.current_index = int(start_index) % self.n
@@ -434,7 +572,7 @@ class TrajectoryTracker:
     # PROGRESS: nearest trajectory point, measured from the camera
     # ========================================================
     def find_nearest_index(self):
-        idxs = (self.current_index + np.arange(-PROGRESS_BACK_PTS, PROGRESS_AHEAD_PTS)) % self.n
+        idxs = (self.current_index + np.arange(-self.back_pts, self.ahead_pts)) % self.n
         depth, lat, _, _, _, _ = self.camera.project(self.xs[idxs], self.ys[idxs])
         dist = np.hypot(depth, lat)   # distancia en el plano, en el sistema de la camara
 
@@ -450,9 +588,9 @@ class TrajectoryTracker:
         Devuelve el punto de la trayectoria que ve la camara a `lookahead`
         metros hacia delante (en el sistema de la camara).
 
-        El punto se INTERPOLA entre los dos puntos de la trayectoria que
-        quedan a cada lado de esa distancia, asi se mueve de forma continua y
-        no a saltos de un punto al siguiente.
+        La trayectoria es el spline remuestreado (puntos cada pocos cm), y el
+        punto se INTERPOLA entre los dos puntos que quedan a cada lado de esa
+        distancia, asi se mueve de forma continua sobre la curva.
 
         Se recorre la trayectoria hacia delante desde el punto mas cercano y
         se usa el primer tramo continuo de puntos visibles en la imagen:
@@ -604,8 +742,13 @@ class TrajectoryVisualizer:
     def __init__(self, world, vehicle, trajectory, onboard):
         self.world = world
         self.vehicle = vehicle
-        self.trajectory = trajectory
         self.onboard = onboard
+
+        # Para dibujar no hace falta cada punto del spline (cada 10 cm): se
+        # dibuja uno de cada pocos para que la pantalla vaya fluida.
+        step = path_length(trajectory) / len(trajectory)
+        draw_every = max(1, int(round(OVERLAY_STEP_M / step)))
+        self.trajectory = trajectory[::draw_every]
 
         self.top_camera = None
         self.top_image = None
@@ -625,8 +768,8 @@ class TrajectoryVisualizer:
         self.kart_x0 = half + (half - onboard.width) // 2
         self.kart_y0 = (DISPLAY_HEIGHT - onboard.height) // 2
 
-        self.xs = np.array([p["x"] for p in trajectory], dtype=float)
-        self.ys = np.array([p["y"] for p in trajectory], dtype=float)
+        self.xs = np.array([p["x"] for p in self.trajectory], dtype=float)
+        self.ys = np.array([p["y"] for p in self.trajectory], dtype=float)
 
         self.center_x = (self.xs.min() + self.xs.max()) / 2
         self.center_y = (self.ys.min() + self.ys.max()) / 2
@@ -871,6 +1014,10 @@ def spawn_kart(world, spawn):
 def game_loop(args):
     trajectory = load_trajectory(args.trajectory)
 
+    # Spline sobre los puntos del CSV: a partir de aqui todo trabaja sobre la curva suave
+    if SPLINE_ENABLED:
+        trajectory = build_spline_trajectory(trajectory)
+
     client = carla.Client("localhost", args.port)
     client.set_timeout(10.0)
 
@@ -881,7 +1028,7 @@ def game_loop(args):
         world = client.load_world(args.town)
 
     # ========================================================
-    # SPAWN POINTS (5 puntos del circuito + los mismos 5 al reves)
+    # SPAWN POINTS (puntos del circuito + los mismos al reves)
     # ========================================================
     candidates = compute_spawn_candidates(trajectory, NUM_SPAWN_POINTS, seed=args.town)
 
@@ -1015,6 +1162,7 @@ def game_loop(args):
                 f"v={speed:5.2f}/{target_speed:5.2f} | "
                 f"angle={math.degrees(angle_error):+6.1f}° err_px={pixel_error:+5.0f} | "
                 f"steer={steer:+.3f}",
+                f"thr={throttle:.2f} brk={brake:.2f} | ",
                 end=""
             )
 
@@ -1078,14 +1226,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="../TUMFTM/Output/Track2/Track_2_trayectory_opt.csv"
+        default="../TUMFTM/Output/Track8/Track_8_trayectory_opt.csv"
     )
 
     parser.add_argument(
         "--town",
         "--carla-town",
         type=str,
-        default="Track2"
+        default="Track8"
     )
 
     parser.add_argument(
