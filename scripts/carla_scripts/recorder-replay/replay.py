@@ -109,9 +109,9 @@ def replay_loop(args, view="car"):
     camera_bp = blueprint_library.find("sensor.camera.rgb")
     camera_bp.set_attribute("image_size_x", str(display_width))
     camera_bp.set_attribute("image_size_y", str(display_height))
-    camera_bp.set_attribute("fov", "90")
+    camera_bp.set_attribute("fov", "70")
 
-    camera_transform = carla.Transform(carla.Location(x=0.8, z=1.7))
+    camera_transform = carla.Transform(carla.Location(x = -0.5, y=  -0.68, z = 1.3), carla.Rotation(pitch=-12))
     camera = world.spawn_actor(camera_bp, camera_transform, attach_to=vehicle)
 
     frame_q = Queue(maxsize=1)   # save (rgb, bgr, (w, h))

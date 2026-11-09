@@ -109,7 +109,7 @@ ALIGN_ROTATION_DEG, ALIGN_MIRROR_X, ALIGN_MIRROR_Y, ALIGN_OFFSET_X, ALIGN_OFFSET
 # el lookahead efectivo nunca baja de la distancia del primer punto de suelo
 # que ve la camara (se calcula solo a partir de la altura y el pitch de la
 # camara) multiplicada por este margen.
-LOOKAHEAD_MIN = 2.5
+LOOKAHEAD_MIN = 2.0
 LOOKAHEAD_SPEED_GAIN = 0.30
 LOOKAHEAD_MAX = 4.0
 LOOKAHEAD_VISIBLE_MARGIN = 1.1
@@ -133,7 +133,7 @@ SPEED_BRAKE_THRESHOLD = 2.5
 # ============================================================
 # TOP CAMERA
 # ============================================================
-TOP_CAMERA_HEIGHT = 40.0
+TOP_CAMERA_HEIGHT = 60.0
 TOP_CAMERA_FOV = 90.0
 
 # ============================================================
@@ -1226,14 +1226,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="../TUMFTM/Output/Track8/Track_8_trayectory_opt.csv"
+        default="../TUMFTM/Output/Track1/Track_1_trayectory_opt.csv"
     )
 
     parser.add_argument(
         "--town",
         "--carla-town",
         type=str,
-        default="Track8"
+        default="Track1"
     )
 
     parser.add_argument(
